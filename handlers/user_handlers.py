@@ -437,6 +437,9 @@ async def process_unknown_message(message: Message, state: FSMContext):
 
 async def notify_operators_new_ticket(bot: Bot, ticket, user):
     """Уведомить операторов о новом тикете"""
+    import logging
+    logger = logging.getLogger(__name__)
+    
     username = f"@{user.username}" if user.username else user.full_name
     
     text = (
@@ -446,6 +449,10 @@ async def notify_operators_new_ticket(bot: Bot, ticket, user):
         f"📝 {ticket.subject}"
     )
     
+    if not OPERATOR_IDS:
+        logger.warning("OPERATOR_IDS is empty! No one to notify.")
+        return
+    
     for operator_id in OPERATOR_IDS:
         try:
             await bot.send_message(
@@ -453,33 +460,37 @@ async def notify_operators_new_ticket(bot: Bot, ticket, user):
                 text,
                 parse_mode="HTML"
             )
-        except Exception:
-            pass
+            logger.info(f"Notified operator {operator_id} about new ticket {ticket.ticket_code}")
+        except Exception as e:
+            logger.error(f"Failed to notify operator {operator_id}: {e}")
 
 
 async def notify_operator_new_message(bot: Bot, ticket, user, message: Message):
     """Уведомить оператора о новом сообщении в тикете"""
-    # Уведомляем назначенного оператора или всех
-    operator_ids = [ticket.operator_id] if ticket.operator_id else OPERATOR_IDS
-    
     username = f"@{user.username}" if user.username else user.full_name
     
-    for op_id in operator_ids:
-        if op_id is None:
-            continue
+    # Определяем кому отправлять уведомление
+    target_telegram_ids: list[int] = []
+    
+    if ticket.operator_id:
+        # Если назначен оператор - получаем его telegram_id
+        if ticket.operator and ticket.operator.telegram_id:
+            target_telegram_ids = [ticket.operator.telegram_id]
+        else:
+            # Fallback: уведомляем всех операторов
+            target_telegram_ids = list(OPERATOR_IDS)
+    else:
+        # Оператор не назначен - уведомляем всех
+        target_telegram_ids = list(OPERATOR_IDS)
+    
+    text = (
+        f"💬 <b>Новое сообщение</b>\n\n"
+        f"🎫 {ticket.ticket_code}\n"
+        f"👤 {username}"
+    )
+    
+    for target_id in target_telegram_ids:
         try:
-            # Ищем telegram_id оператора если это внутренний id
-            async with get_db().session_factory() as session:
-                service = TicketService(session)
-                operator = await service.get_user_by_telegram_id(op_id)
-                target_id = operator.telegram_id if operator else op_id
-            
-            text = (
-                f"💬 <b>Новое сообщение</b>\n\n"
-                f"🎫 {ticket.ticket_code}\n"
-                f"👤 {username}"
-            )
-            
             await bot.send_message(target_id, text, parse_mode="HTML")
             
             # Пересылаем контент
@@ -490,6 +501,8 @@ async def notify_operator_new_message(bot: Bot, ticket, user, message: Message):
             elif message.content_type == "document":
                 await bot.send_document(target_id, message.document.file_id, caption=message.caption)
                 
-        except Exception:
-            pass
+        except Exception as e:
+            # Логируем ошибку для отладки
+            import logging
+            logging.error(f"Failed to notify operator {target_id}: {e}")
 

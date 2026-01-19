@@ -29,6 +29,8 @@ logger = logging.getLogger(__name__)
 
 async def on_startup(bot: Bot):
     """Действия при запуске бота"""
+    from config import OPERATOR_IDS
+    
     logger.info("Инициализация базы данных...")
     db = get_db()
     await db.init_db()
@@ -37,6 +39,12 @@ async def on_startup(bot: Bot):
     # Информация о боте
     bot_info = await bot.get_me()
     logger.info(f"Бот запущен: @{bot_info.username}")
+    
+    # Проверка операторов
+    if OPERATOR_IDS:
+        logger.info(f"Операторы: {OPERATOR_IDS}")
+    else:
+        logger.warning("⚠️ OPERATOR_IDS пуст! Укажите ID операторов в .env")
 
 
 async def on_shutdown(bot: Bot):
