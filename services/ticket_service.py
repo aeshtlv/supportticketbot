@@ -196,4 +196,108 @@ class TicketService:
             .limit(limit)
         )
         return list(result.scalars().all())
+    
+    # ==================== АРХИВ И ФИЛЬТРЫ ====================
+    
+    async def get_closed_tickets(self, limit: int = 20) -> list[Ticket]:
+        """Получить закрытые тикеты (архив)"""
+        result = await self.session.execute(
+            select(Ticket)
+            .options(selectinload(Ticket.user), selectinload(Ticket.operator))
+            .where(Ticket.status == TicketStatus.CLOSED)
+            .order_by(Ticket.closed_at.desc())
+            .limit(limit)
+        )
+        return list(result.scalars().all())
+    
+    async def get_tickets_by_status(self, status: TicketStatus, limit: int = 20) -> list[Ticket]:
+        """Получить тикеты по статусу"""
+        result = await self.session.execute(
+            select(Ticket)
+            .options(selectinload(Ticket.user), selectinload(Ticket.operator))
+            .where(Ticket.status == status)
+            .order_by(Ticket.updated_at.desc())
+            .limit(limit)
+        )
+        return list(result.scalars().all())
+    
+    async def get_my_tickets(self, operator: User, limit: int = 20) -> list[Ticket]:
+        """Получить тикеты назначенные на оператора"""
+        result = await self.session.execute(
+            select(Ticket)
+            .options(selectinload(Ticket.user))
+            .where(
+                Ticket.operator_id == operator.id,
+                Ticket.status != TicketStatus.CLOSED
+            )
+            .order_by(Ticket.updated_at.desc())
+            .limit(limit)
+        )
+        return list(result.scalars().all())
+    
+    async def search_ticket(self, code: str) -> Optional[Ticket]:
+        """Поиск тикета по коду (частичное совпадение)"""
+        result = await self.session.execute(
+            select(Ticket)
+            .options(selectinload(Ticket.user), selectinload(Ticket.operator))
+            .where(Ticket.ticket_code.ilike(f"%{code}%"))
+            .limit(1)
+        )
+        return result.scalar_one_or_none()
+    
+    # ==================== СТАТИСТИКА ====================
+    
+    async def get_operator_stats(self, operator: User) -> dict:
+        """Статистика оператора"""
+        # Всего обработано
+        total_result = await self.session.execute(
+            select(func.count(Ticket.id))
+            .where(Ticket.operator_id == operator.id)
+        )
+        total = total_result.scalar() or 0
+        
+        # Закрыто
+        closed_result = await self.session.execute(
+            select(func.count(Ticket.id))
+            .where(
+                Ticket.operator_id == operator.id,
+                Ticket.status == TicketStatus.CLOSED
+            )
+        )
+        closed = closed_result.scalar() or 0
+        
+        # В работе
+        active_result = await self.session.execute(
+            select(func.count(Ticket.id))
+            .where(
+                Ticket.operator_id == operator.id,
+                Ticket.status != TicketStatus.CLOSED
+            )
+        )
+        active = active_result.scalar() or 0
+        
+        return {
+            "total": total,
+            "closed": closed,
+            "active": active
+        }
+    
+    async def get_global_stats(self) -> dict:
+        """Общая статистика"""
+        # Всего тикетов
+        total_result = await self.session.execute(
+            select(func.count(Ticket.id))
+        )
+        total = total_result.scalar() or 0
+        
+        # По статусам
+        stats = {"total": total}
+        for status in TicketStatus:
+            result = await self.session.execute(
+                select(func.count(Ticket.id))
+                .where(Ticket.status == status)
+            )
+            stats[status.value] = result.scalar() or 0
+        
+        return stats
 

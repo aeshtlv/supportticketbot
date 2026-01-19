@@ -10,25 +10,49 @@ class OperatorKeyboards:
     """Клавиатуры для оператора"""
     
     @staticmethod
-    def main_menu(open_count: int) -> InlineKeyboardMarkup:
+    def main_menu(open_count: int, my_count: int = 0) -> InlineKeyboardMarkup:
         """Главное меню оператора"""
-        return InlineKeyboardMarkup(inline_keyboard=[
+        buttons = [
             [InlineKeyboardButton(
-                text=f"📥 Тикеты ({open_count})",
+                text=f"📥 Открытые ({open_count})",
                 callback_data="op_list_tickets"
             )],
-            [InlineKeyboardButton(
-                text="🔄 Обновить",
-                callback_data="op_refresh"
-            )]
+        ]
+        
+        if my_count > 0:
+            buttons.append([InlineKeyboardButton(
+                text=f"📌 Мои тикеты ({my_count})",
+                callback_data="op_my_tickets"
+            )])
+        
+        buttons.extend([
+            [
+                InlineKeyboardButton(text="📊 Статистика", callback_data="op_stats"),
+                InlineKeyboardButton(text="📦 Архив", callback_data="op_archive")
+            ],
+            [
+                InlineKeyboardButton(text="🔍 Поиск", callback_data="op_search"),
+                InlineKeyboardButton(text="🔄 Обновить", callback_data="op_refresh")
+            ]
         ])
+        
+        return InlineKeyboardMarkup(inline_keyboard=buttons)
     
     @staticmethod
-    def tickets_list(tickets: list[Ticket]) -> InlineKeyboardMarkup:
+    def tickets_list(tickets: list[Ticket], show_filters: bool = True) -> InlineKeyboardMarkup:
         """Список тикетов - компактный вид"""
         buttons = []
         
-        for ticket in tickets[:15]:  # Лимит 15 тикетов
+        # Фильтры
+        if show_filters:
+            buttons.append([
+                InlineKeyboardButton(text="🔵 New", callback_data="op_filter:open"),
+                InlineKeyboardButton(text="🟡 Work", callback_data="op_filter:in_progress"),
+                InlineKeyboardButton(text="🟠 Wait", callback_data="op_filter:waiting_user"),
+                InlineKeyboardButton(text="📋 All", callback_data="op_list_tickets")
+            ])
+        
+        for ticket in tickets[:12]:
             status_emoji = {
                 TicketStatus.OPEN: "🔵",
                 TicketStatus.IN_PROGRESS: "🟡",
@@ -36,10 +60,8 @@ class OperatorKeyboards:
                 TicketStatus.CLOSED: "⚫"
             }.get(ticket.status, "⚪")
             
-            # Компактное отображение
-            subject = ticket.subject[:20] + "…" if len(ticket.subject) > 20 else ticket.subject
+            subject = ticket.subject[:18] + "…" if len(ticket.subject) > 18 else ticket.subject
             
-            # Основная кнопка тикета
             buttons.append([
                 InlineKeyboardButton(
                     text=f"{status_emoji} {ticket.ticket_code} · {subject}",
@@ -51,9 +73,9 @@ class OperatorKeyboards:
                 )
             ])
         
-        if len(tickets) > 15:
+        if len(tickets) > 12:
             buttons.append([InlineKeyboardButton(
-                text=f"... ещё {len(tickets) - 15} тикетов",
+                text=f"… ещё {len(tickets) - 12}",
                 callback_data="op_list_tickets"
             )])
         
@@ -65,12 +87,77 @@ class OperatorKeyboards:
         return InlineKeyboardMarkup(inline_keyboard=buttons)
     
     @staticmethod
+    def archive_list(tickets: list[Ticket]) -> InlineKeyboardMarkup:
+        """Список закрытых тикетов (архив)"""
+        buttons = []
+        
+        for ticket in tickets[:10]:
+            subject = ticket.subject[:20] + "…" if len(ticket.subject) > 20 else ticket.subject
+            closed_date = ticket.closed_at.strftime("%d.%m") if ticket.closed_at else "?"
+            
+            buttons.append([
+                InlineKeyboardButton(
+                    text=f"⚫ {ticket.ticket_code} · {subject} · {closed_date}",
+                    callback_data=f"op_view:{ticket.ticket_code}"
+                )
+            ])
+        
+        if not tickets:
+            buttons.append([InlineKeyboardButton(
+                text="📭 Архив пуст",
+                callback_data="op_back_menu"
+            )])
+        
+        buttons.append([
+            InlineKeyboardButton(text="🏠 Меню", callback_data="op_back_menu")
+        ])
+        
+        return InlineKeyboardMarkup(inline_keyboard=buttons)
+    
+    @staticmethod
+    def my_tickets_list(tickets: list[Ticket]) -> InlineKeyboardMarkup:
+        """Мои тикеты (назначенные на оператора)"""
+        buttons = []
+        
+        for ticket in tickets[:10]:
+            status_emoji = {
+                TicketStatus.OPEN: "🔵",
+                TicketStatus.IN_PROGRESS: "🟡",
+                TicketStatus.WAITING_USER: "🟠",
+            }.get(ticket.status, "⚪")
+            
+            subject = ticket.subject[:18] + "…" if len(ticket.subject) > 18 else ticket.subject
+            
+            buttons.append([
+                InlineKeyboardButton(
+                    text=f"{status_emoji} {ticket.ticket_code} · {subject}",
+                    callback_data=f"op_view:{ticket.ticket_code}"
+                ),
+                InlineKeyboardButton(
+                    text="✍️",
+                    callback_data=f"op_quick_reply:{ticket.ticket_code}"
+                )
+            ])
+        
+        if not tickets:
+            buttons.append([InlineKeyboardButton(
+                text="📭 Нет назначенных тикетов",
+                callback_data="op_list_tickets"
+            )])
+        
+        buttons.append([
+            InlineKeyboardButton(text="📥 Все тикеты", callback_data="op_list_tickets"),
+            InlineKeyboardButton(text="🏠 Меню", callback_data="op_back_menu")
+        ])
+        
+        return InlineKeyboardMarkup(inline_keyboard=buttons)
+    
+    @staticmethod
     def ticket_view(ticket: Ticket) -> InlineKeyboardMarkup:
         """Просмотр тикета - основные действия"""
         buttons = []
         
         if ticket.status != TicketStatus.CLOSED:
-            # Главное действие - ответить
             buttons.append([
                 InlineKeyboardButton(
                     text="✍️ Ответить",
@@ -78,7 +165,6 @@ class OperatorKeyboards:
                 )
             ])
             
-            # Действия со статусом
             status_buttons = []
             
             if ticket.status == TicketStatus.OPEN:
@@ -87,16 +173,30 @@ class OperatorKeyboards:
                     callback_data=f"op_take:{ticket.ticket_code}"
                 ))
             
-            status_buttons.append(InlineKeyboardButton(
-                text="⏳ Ждём ответа",
-                callback_data=f"op_waiting:{ticket.ticket_code}"
-            ))
+            if ticket.status != TicketStatus.WAITING_USER:
+                status_buttons.append(InlineKeyboardButton(
+                    text="⏳ Ждём",
+                    callback_data=f"op_waiting:{ticket.ticket_code}"
+                ))
+            
             status_buttons.append(InlineKeyboardButton(
                 text="🔒 Закрыть",
                 callback_data=f"op_close:{ticket.ticket_code}"
             ))
             
             buttons.append(status_buttons)
+            
+            # Приоритет
+            buttons.append([
+                InlineKeyboardButton(
+                    text="🔴 Срочный" if ticket.priority != "high" else "✅ Срочный",
+                    callback_data=f"op_priority:{ticket.ticket_code}:high"
+                ),
+                InlineKeyboardButton(
+                    text="🟢 Обычный" if ticket.priority != "normal" else "✅ Обычный",
+                    callback_data=f"op_priority:{ticket.ticket_code}:normal"
+                )
+            ])
         else:
             buttons.append([
                 InlineKeyboardButton(
@@ -105,7 +205,6 @@ class OperatorKeyboards:
                 )
             ])
         
-        # Навигация
         buttons.append([
             InlineKeyboardButton(
                 text="📜 История",
@@ -190,5 +289,33 @@ class OperatorKeyboards:
                     text="🔙 К тикету",
                     callback_data=f"op_back_ticket:{ticket_code}"
                 )
+            ]
+        ])
+    
+    @staticmethod
+    def stats_menu() -> InlineKeyboardMarkup:
+        """Меню статистики"""
+        return InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🏠 Меню", callback_data="op_back_menu")]
+        ])
+    
+    @staticmethod
+    def search_cancel() -> InlineKeyboardMarkup:
+        """Отмена поиска"""
+        return InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="❌ Отмена", callback_data="op_back_menu")]
+        ])
+    
+    @staticmethod
+    def search_result(ticket_code: str) -> InlineKeyboardMarkup:
+        """Результат поиска"""
+        return InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(
+                text="👁 Открыть тикет",
+                callback_data=f"op_view:{ticket_code}"
+            )],
+            [
+                InlineKeyboardButton(text="🔍 Новый поиск", callback_data="op_search"),
+                InlineKeyboardButton(text="🏠 Меню", callback_data="op_back_menu")
             ]
         ])

@@ -23,7 +23,6 @@ async def cmd_start(message: Message, state: FSMContext):
     async with get_db().session_factory() as session:
         service = TicketService(session)
         
-        # Создаём/обновляем пользователя
         user = await service.get_or_create_user(
             telegram_id=user_id,
             username=message.from_user.username,
@@ -31,22 +30,29 @@ async def cmd_start(message: Message, state: FSMContext):
             is_operator=user_id in OPERATOR_IDS
         )
         
-        # Проверяем, оператор ли это
         if user_id in OPERATOR_IDS:
             open_count = await service.get_open_tickets_count()
+            my_tickets = await service.get_my_tickets(user)
+            my_count = len(my_tickets)
+            
             await state.set_state(OperatorState.OP_IDLE)
             await message.answer(
-                f"👋 Привет, оператор!\n\n"
-                f"📥 Новых тикетов: {open_count}",
-                reply_markup=OperatorKeyboards.main_menu(open_count)
+                f"🎛 <b>Панель оператора</b>\n\n"
+                f"📥 Открытых: <b>{open_count}</b>\n"
+                f"📌 Моих: <b>{my_count}</b>",
+                reply_markup=OperatorKeyboards.main_menu(open_count, my_count),
+                parse_mode="HTML"
             )
         else:
+            # Показываем количество активных тикетов пользователя
+            open_tickets = await service.get_user_open_tickets(user)
+            
+            text = "👋 Привет!\nЧем можем помочь?"
+            if open_tickets:
+                text = f"👋 Привет!\n\n📌 У вас {len(open_tickets)} активных обращений"
+            
             await state.set_state(UserState.IDLE)
-            await message.answer(
-                "👋 Привет!\n"
-                "Чем можем помочь?",
-                reply_markup=UserKeyboards.main_menu()
-            )
+            await message.answer(text, reply_markup=UserKeyboards.main_menu())
 
 
 @router.message(Command("help"))
@@ -57,29 +63,38 @@ async def cmd_help(message: Message):
     if user_id in OPERATOR_IDS:
         await message.answer(
             "📖 <b>Справка для оператора</b>\n\n"
+            "<b>Команды:</b>\n"
             "/start - главное меню\n"
-            "/tickets - список тикетов\n\n"
-            "Выберите тикет из списка, чтобы:\n"
-            "• Ответить пользователю\n"
-            "• Изменить статус\n"
-            "• Закрыть обращение",
+            "/tickets - список тикетов\n"
+            "/stats - статистика\n\n"
+            "<b>Возможности:</b>\n"
+            "• 📥 Просмотр открытых тикетов\n"
+            "• 📌 Мои тикеты (назначенные)\n"
+            "• 📦 Архив закрытых\n"
+            "• 🔍 Поиск по коду\n"
+            "• 📊 Статистика",
             parse_mode="HTML"
         )
     else:
         await message.answer(
             "📖 <b>Справка</b>\n\n"
+            "<b>Команды:</b>\n"
             "/start - главное меню\n"
-            "/new - создать новый тикет\n"
+            "/new - создать тикет\n"
             "/tickets - мои обращения\n\n"
-            "Вы можете создать тикет и переписываться "
-            "с оператором прямо в боте.",
+            "<b>Возможности:</b>\n"
+            "• Создание тикетов\n"
+            "• Общение с оператором\n"
+            "• Отправка фото, видео, файлов\n"
+            "• Просмотр истории\n"
+            "• Закрытие тикета",
             parse_mode="HTML"
         )
 
 
 @router.message(Command("new"))
 async def cmd_new_ticket(message: Message, state: FSMContext):
-    """Команда /new - быстрое создание тикета"""
+    """Команда /new"""
     user_id = message.from_user.id
     
     if user_id in OPERATOR_IDS:
@@ -115,25 +130,28 @@ async def cmd_new_ticket(message: Message, state: FSMContext):
 
 @router.message(Command("tickets"))
 async def cmd_tickets(message: Message, state: FSMContext):
-    """Команда /tickets - список тикетов"""
+    """Команда /tickets"""
     user_id = message.from_user.id
     
     async with get_db().session_factory() as session:
         service = TicketService(session)
         
         if user_id in OPERATOR_IDS:
-            # Для оператора - все открытые тикеты
             tickets = await service.get_all_open_tickets()
             if tickets:
                 await state.set_state(OperatorState.OP_IDLE)
                 await message.answer(
-                    f"📥 Открытые тикеты ({len(tickets)}):",
-                    reply_markup=OperatorKeyboards.tickets_list(tickets)
+                    f"📥 <b>Открытые тикеты</b> ({len(tickets)})\n\n"
+                    f"🔵 new · 🟡 work · 🟠 wait",
+                    reply_markup=OperatorKeyboards.tickets_list(tickets),
+                    parse_mode="HTML"
                 )
             else:
-                await message.answer("📭 Нет открытых тикетов")
+                await message.answer(
+                    "📭 Нет открытых тикетов",
+                    reply_markup=OperatorKeyboards.main_menu(0)
+                )
         else:
-            # Для пользователя - его тикеты
             user = await service.get_or_create_user(
                 telegram_id=user_id,
                 username=message.from_user.username,
@@ -141,15 +159,54 @@ async def cmd_tickets(message: Message, state: FSMContext):
             )
             tickets = await service.get_user_all_tickets(user)
             
-            if tickets:
-                await state.set_state(UserState.IDLE)
-                await message.answer(
-                    "📂 Ваши обращения:",
-                    reply_markup=UserKeyboards.tickets_list(tickets)
-                )
-            else:
-                await message.answer(
-                    "📭 У вас пока нет обращений",
-                    reply_markup=UserKeyboards.main_menu()
-                )
+            await state.set_state(UserState.IDLE)
+            await message.answer(
+                "📂 <b>Мои обращения</b>\n\n"
+                "🔵 открыт · 🟡 в работе · 🟠 ждёт ответа",
+                reply_markup=UserKeyboards.tickets_list(tickets),
+                parse_mode="HTML"
+            )
 
+
+@router.message(Command("stats"))
+async def cmd_stats(message: Message, state: FSMContext):
+    """Команда /stats (только для операторов)"""
+    user_id = message.from_user.id
+    
+    if user_id not in OPERATOR_IDS:
+        await message.answer("❌ Команда доступна только операторам")
+        return
+    
+    async with get_db().session_factory() as session:
+        service = TicketService(session)
+        
+        operator = await service.get_or_create_user(
+            telegram_id=user_id,
+            username=message.from_user.username,
+            full_name=message.from_user.full_name,
+            is_operator=True
+        )
+        
+        my_stats = await service.get_operator_stats(operator)
+        global_stats = await service.get_global_stats()
+        
+        text = (
+            f"📊 <b>Статистика</b>\n"
+            f"━━━━━━━━━━━━━━━━━━\n\n"
+            f"<b>👤 Ваша статистика:</b>\n"
+            f"├ Всего: {my_stats['total']}\n"
+            f"├ Закрыто: {my_stats['closed']}\n"
+            f"└ В работе: {my_stats['active']}\n\n"
+            f"<b>🌐 Общая:</b>\n"
+            f"├ Всего: {global_stats['total']}\n"
+            f"├ 🔵 Открыто: {global_stats.get('open', 0)}\n"
+            f"├ 🟡 В работе: {global_stats.get('in_progress', 0)}\n"
+            f"├ 🟠 Ждут: {global_stats.get('waiting_user', 0)}\n"
+            f"└ ⚫ Закрыто: {global_stats.get('closed', 0)}"
+        )
+        
+        await message.answer(
+            text,
+            reply_markup=OperatorKeyboards.stats_menu(),
+            parse_mode="HTML"
+        )
