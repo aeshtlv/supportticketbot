@@ -1,0 +1,37 @@
+# Git
+.git
+.gitignore
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+env/
+.venv/
+*.egg-info/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Local env (will use docker env)
+.env.local
+
+# Database (use volume instead)
+*.db
+*.sqlite
+*.sqlite3
+data/
+
+# Docs
+README.md
+*.md
+
+# Docker
+Dockerfile
+docker-compose*.yml
+.dockerignore
+

@@ -25,6 +25,9 @@ env/
 # Logs
 *.log
 
+# Data directory
+data/
+
 # Distribution
 dist/
 build/
