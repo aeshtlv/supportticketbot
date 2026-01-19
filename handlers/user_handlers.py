@@ -1,6 +1,7 @@
 """
 Обработчики для пользователя
 """
+import logging
 from aiogram import Router, F, Bot
 from aiogram.types import Message, CallbackQuery
 from aiogram.fsm.context import FSMContext
@@ -12,6 +13,10 @@ from states import UserState
 from keyboards import UserKeyboards
 
 router = Router()
+logger = logging.getLogger(__name__)
+
+# Поддерживаемые типы контента
+SUPPORTED_CONTENT_TYPES = {"text", "photo", "document", "video", "voice", "video_note", "sticker", "animation"}
 
 
 # ==================== CALLBACK HANDLERS ====================
@@ -162,8 +167,8 @@ async def cb_chat_ticket(callback: CallbackQuery, state: FSMContext):
         
         await callback.message.edit_text(
             f"💬 <b>Чат тикета {ticket.ticket_code}</b>\n\n"
-            f"Вы можете отправить сообщение, фото или файл.\n"
-            f"Оператор получит ваше сообщение."
+            f"Отправьте сообщение — оператор его получит.\n"
+            f"Поддерживаются: текст, фото, видео, голосовые, файлы."
             f"{history_text}",
             reply_markup=UserKeyboards.ticket_chat(ticket),
             parse_mode="HTML"
@@ -239,12 +244,12 @@ async def process_ticket_subject(message: Message, state: FSMContext):
     
     await message.answer(
         "📝 Опишите проблему подробнее\n"
-        "Можно прислать текст, фото или файл",
+        "Можно прислать текст, фото, видео или файл",
         reply_markup=UserKeyboards.cancel()
     )
 
 
-@router.message(UserState.CREATE_TICKET_MESSAGE, F.content_type.in_({"text", "photo", "document"}))
+@router.message(UserState.CREATE_TICKET_MESSAGE, F.content_type.in_(SUPPORTED_CONTENT_TYPES))
 async def process_ticket_message(message: Message, state: FSMContext, bot: Bot):
     """Обработка первого сообщения тикета"""
     data = await state.get_data()
@@ -269,22 +274,11 @@ async def process_ticket_message(message: Message, state: FSMContext, bot: Bot):
         
         # Создаём тикет
         ticket = await service.create_ticket(user, subject)
+        ticket_code = ticket.ticket_code
+        ticket_id = ticket.id
         
-        # Определяем тип контента
-        content_type = message.content_type
-        text = None
-        file_id = None
-        file_name = None
-        
-        if content_type == "text":
-            text = message.text
-        elif content_type == "photo":
-            file_id = message.photo[-1].file_id
-            text = message.caption
-        elif content_type == "document":
-            file_id = message.document.file_id
-            file_name = message.document.file_name
-            text = message.caption
+        # Извлекаем данные из сообщения
+        content_type, text, file_id, file_name = extract_message_content(message)
         
         # Добавляем первое сообщение
         await service.add_message(
@@ -297,24 +291,25 @@ async def process_ticket_message(message: Message, state: FSMContext, bot: Bot):
             is_from_operator=False
         )
         
-        # Сохраняем в state и переводим в режим чата
-        await state.update_data(
-            current_ticket_id=ticket.id,
-            current_ticket_code=ticket.ticket_code,
-            ticket_subject=None
-        )
-        await state.set_state(UserState.TICKET_CHAT)
-        
-        await message.answer(
-            f"✅ Тикет <b>{ticket.ticket_code}</b> создан\n\n"
-            f"Оператор скоро ответит.\n"
-            f"Вы можете писать сюда дополнительные сообщения.",
-            reply_markup=UserKeyboards.ticket_chat(ticket),
-            parse_mode="HTML"
-        )
-        
-        # Уведомляем операторов
-        await notify_operators_new_ticket(bot, ticket, user)
+        username = f"@{user.username}" if user.username else user.full_name
+    
+    # Сохраняем в state и переводим в режим чата
+    await state.update_data(
+        current_ticket_id=ticket_id,
+        current_ticket_code=ticket_code,
+        ticket_subject=None
+    )
+    await state.set_state(UserState.TICKET_CHAT)
+    
+    await message.answer(
+        f"✅ Тикет <b>{ticket_code}</b> создан\n\n"
+        f"Оператор скоро ответит.\n"
+        f"Вы можете писать сюда дополнительные сообщения.",
+        parse_mode="HTML"
+    )
+    
+    # Уведомляем операторов (вне сессии БД)
+    await notify_operators_new_ticket(bot, ticket_code, subject, username, message)
 
 
 @router.message(UserState.CREATE_TICKET_MESSAGE)
@@ -322,16 +317,17 @@ async def process_ticket_message_invalid(message: Message, state: FSMContext):
     """Неподдерживаемый тип контента при создании тикета"""
     await message.answer(
         "❌ Неподдерживаемый тип сообщения.\n"
-        "Пожалуйста, отправьте текст, фото или документ.",
+        "Отправьте текст, фото, видео, голосовое или файл.",
         reply_markup=UserKeyboards.cancel()
     )
 
 
-@router.message(UserState.TICKET_CHAT, F.content_type.in_({"text", "photo", "document"}))
+@router.message(UserState.TICKET_CHAT, F.content_type.in_(SUPPORTED_CONTENT_TYPES))
 async def process_ticket_chat_message(message: Message, state: FSMContext, bot: Bot):
     """Сообщение в чате тикета"""
     data = await state.get_data()
     ticket_id = data.get("current_ticket_id")
+    ticket_code = data.get("current_ticket_code")
     
     if not ticket_id:
         await state.set_state(UserState.IDLE)
@@ -340,6 +336,10 @@ async def process_ticket_chat_message(message: Message, state: FSMContext, bot: 
             reply_markup=UserKeyboards.main_menu()
         )
         return
+    
+    # Собираем данные для уведомления ДО работы с БД
+    target_operator_ids: list[int] = []
+    username = ""
     
     async with get_db().session_factory() as session:
         service = TicketService(session)
@@ -360,23 +360,18 @@ async def process_ticket_chat_message(message: Message, state: FSMContext, bot: 
             await message.answer("❌ Ошибка пользователя")
             return
         
-        # Определяем тип контента
-        content_type = message.content_type
-        text = None
-        file_id = None
-        file_name = None
+        username = f"@{user.username}" if user.username else user.full_name
         
-        if content_type == "text":
-            text = message.text
-        elif content_type == "photo":
-            file_id = message.photo[-1].file_id
-            text = message.caption
-        elif content_type == "document":
-            file_id = message.document.file_id
-            file_name = message.document.file_name
-            text = message.caption
+        # Определяем кому отправлять
+        if ticket.operator and ticket.operator.telegram_id:
+            target_operator_ids = [ticket.operator.telegram_id]
+        else:
+            target_operator_ids = list(OPERATOR_IDS)
         
-        # Добавляем сообщение
+        # Извлекаем данные из сообщения
+        content_type, text, file_id, file_name = extract_message_content(message)
+        
+        # Добавляем сообщение в БД
         await service.add_message(
             ticket=ticket,
             sender=user,
@@ -386,11 +381,11 @@ async def process_ticket_chat_message(message: Message, state: FSMContext, bot: 
             file_name=file_name,
             is_from_operator=False
         )
-        
-        await message.answer("✉️ Сообщение отправлено оператору")
-        
-        # Уведомляем оператора
-        await notify_operator_new_message(bot, ticket, user, message)
+    
+    await message.answer("✉️ Сообщение отправлено")
+    
+    # Уведомляем оператора (вне сессии БД)
+    await forward_message_to_operators(bot, target_operator_ids, ticket_code, username, message)
 
 
 @router.message(UserState.TICKET_CHAT)
@@ -398,7 +393,7 @@ async def process_ticket_chat_invalid(message: Message, state: FSMContext):
     """Неподдерживаемый тип контента в чате"""
     await message.answer(
         "❌ Неподдерживаемый тип сообщения.\n"
-        "Пожалуйста, отправьте текст, фото или документ."
+        "Отправьте текст, фото, видео, голосовое или файл."
     )
 
 
@@ -435,74 +430,102 @@ async def process_unknown_message(message: Message, state: FSMContext):
 
 # ==================== HELPERS ====================
 
-async def notify_operators_new_ticket(bot: Bot, ticket, user):
+def extract_message_content(message: Message) -> tuple[str, str | None, str | None, str | None]:
+    """Извлекает контент из сообщения"""
+    content_type = message.content_type
+    text = None
+    file_id = None
+    file_name = None
+    
+    if content_type == "text":
+        text = message.text
+    elif content_type == "photo":
+        file_id = message.photo[-1].file_id
+        text = message.caption
+    elif content_type == "document":
+        file_id = message.document.file_id
+        file_name = message.document.file_name
+        text = message.caption
+    elif content_type == "video":
+        file_id = message.video.file_id
+        file_name = message.video.file_name
+        text = message.caption
+    elif content_type == "voice":
+        file_id = message.voice.file_id
+        text = message.caption
+    elif content_type == "video_note":
+        file_id = message.video_note.file_id
+    elif content_type == "sticker":
+        file_id = message.sticker.file_id
+    elif content_type == "animation":
+        file_id = message.animation.file_id
+        text = message.caption
+    
+    return content_type, text, file_id, file_name
+
+
+async def notify_operators_new_ticket(bot: Bot, ticket_code: str, subject: str, username: str, message: Message):
     """Уведомить операторов о новом тикете"""
-    import logging
-    logger = logging.getLogger(__name__)
-    
-    username = f"@{user.username}" if user.username else user.full_name
-    
-    text = (
-        f"🆕 <b>Новый тикет</b>\n\n"
-        f"🎫 {ticket.ticket_code}\n"
-        f"👤 {username}\n"
-        f"📝 {ticket.subject}"
-    )
-    
     if not OPERATOR_IDS:
         logger.warning("OPERATOR_IDS is empty! No one to notify.")
         return
     
+    text = (
+        f"🆕 <b>Новый тикет</b>\n\n"
+        f"🎫 <code>{ticket_code}</code>\n"
+        f"👤 {username}\n"
+        f"📝 {subject}"
+    )
+    
     for operator_id in OPERATOR_IDS:
         try:
-            await bot.send_message(
-                operator_id,
-                text,
-                parse_mode="HTML"
-            )
-            logger.info(f"Notified operator {operator_id} about new ticket {ticket.ticket_code}")
+            await bot.send_message(operator_id, text, parse_mode="HTML")
+            # Пересылаем оригинальное сообщение
+            await forward_content(bot, operator_id, message)
+            logger.info(f"Notified operator {operator_id} about new ticket {ticket_code}")
         except Exception as e:
             logger.error(f"Failed to notify operator {operator_id}: {e}")
 
 
-async def notify_operator_new_message(bot: Bot, ticket, user, message: Message):
-    """Уведомить оператора о новом сообщении в тикете"""
-    username = f"@{user.username}" if user.username else user.full_name
-    
-    # Определяем кому отправлять уведомление
-    target_telegram_ids: list[int] = []
-    
-    if ticket.operator_id:
-        # Если назначен оператор - получаем его telegram_id
-        if ticket.operator and ticket.operator.telegram_id:
-            target_telegram_ids = [ticket.operator.telegram_id]
-        else:
-            # Fallback: уведомляем всех операторов
-            target_telegram_ids = list(OPERATOR_IDS)
-    else:
-        # Оператор не назначен - уведомляем всех
-        target_telegram_ids = list(OPERATOR_IDS)
+async def forward_message_to_operators(bot: Bot, operator_ids: list[int], ticket_code: str, username: str, message: Message):
+    """Переслать сообщение операторам"""
+    if not operator_ids:
+        logger.warning("No operators to notify!")
+        return
     
     text = (
-        f"💬 <b>Новое сообщение</b>\n\n"
-        f"🎫 {ticket.ticket_code}\n"
-        f"👤 {username}"
+        f"💬 <b>Сообщение в тикете</b>\n"
+        f"🎫 <code>{ticket_code}</code> | 👤 {username}"
     )
     
-    for target_id in target_telegram_ids:
+    for operator_id in operator_ids:
         try:
-            await bot.send_message(target_id, text, parse_mode="HTML")
-            
-            # Пересылаем контент
-            if message.content_type == "text":
-                await bot.send_message(target_id, f"📝 {message.text}")
-            elif message.content_type == "photo":
-                await bot.send_photo(target_id, message.photo[-1].file_id, caption=message.caption)
-            elif message.content_type == "document":
-                await bot.send_document(target_id, message.document.file_id, caption=message.caption)
-                
+            await bot.send_message(operator_id, text, parse_mode="HTML")
+            await forward_content(bot, operator_id, message)
         except Exception as e:
-            # Логируем ошибку для отладки
-            import logging
-            logging.error(f"Failed to notify operator {target_id}: {e}")
+            logger.error(f"Failed to forward message to operator {operator_id}: {e}")
 
+
+async def forward_content(bot: Bot, chat_id: int, message: Message):
+    """Пересылает контент сообщения"""
+    try:
+        content_type = message.content_type
+        
+        if content_type == "text":
+            await bot.send_message(chat_id, message.text)
+        elif content_type == "photo":
+            await bot.send_photo(chat_id, message.photo[-1].file_id, caption=message.caption)
+        elif content_type == "document":
+            await bot.send_document(chat_id, message.document.file_id, caption=message.caption)
+        elif content_type == "video":
+            await bot.send_video(chat_id, message.video.file_id, caption=message.caption)
+        elif content_type == "voice":
+            await bot.send_voice(chat_id, message.voice.file_id, caption=message.caption)
+        elif content_type == "video_note":
+            await bot.send_video_note(chat_id, message.video_note.file_id)
+        elif content_type == "sticker":
+            await bot.send_sticker(chat_id, message.sticker.file_id)
+        elif content_type == "animation":
+            await bot.send_animation(chat_id, message.animation.file_id, caption=message.caption)
+    except Exception as e:
+        logger.error(f"Failed to forward content to {chat_id}: {e}")
