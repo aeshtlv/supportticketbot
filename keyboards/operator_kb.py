@@ -46,17 +46,17 @@ class OperatorKeyboards:
         # Фильтры
         if show_filters:
             buttons.append([
-                InlineKeyboardButton(text="🔵 New", callback_data="op_filter:open"),
-                InlineKeyboardButton(text="🟡 Work", callback_data="op_filter:in_progress"),
-                InlineKeyboardButton(text="🟠 Wait", callback_data="op_filter:waiting_user"),
+                InlineKeyboardButton(text="⚪ New", callback_data="op_filter:open"),
+                InlineKeyboardButton(text="🟠 Work", callback_data="op_filter:in_progress"),
+                InlineKeyboardButton(text="🔴 Wait", callback_data="op_filter:waiting_user"),
                 InlineKeyboardButton(text="📋 All", callback_data="op_list_tickets")
             ])
         
         for ticket in tickets[:12]:
             status_emoji = {
-                TicketStatus.OPEN: "🔵",
-                TicketStatus.IN_PROGRESS: "🟡",
-                TicketStatus.WAITING_USER: "🟠",
+                TicketStatus.OPEN: "⚪",
+                TicketStatus.IN_PROGRESS: "🟠",
+                TicketStatus.WAITING_USER: "🔴",
                 TicketStatus.CLOSED: "⚫"
             }.get(ticket.status, "⚪")
             
@@ -121,9 +121,9 @@ class OperatorKeyboards:
         
         for ticket in tickets[:10]:
             status_emoji = {
-                TicketStatus.OPEN: "🔵",
-                TicketStatus.IN_PROGRESS: "🟡",
-                TicketStatus.WAITING_USER: "🟠",
+                TicketStatus.OPEN: "⚪",
+                TicketStatus.IN_PROGRESS: "🟠",
+                TicketStatus.WAITING_USER: "🔴",
             }.get(ticket.status, "⚪")
             
             subject = ticket.subject[:18] + "…" if len(ticket.subject) > 18 else ticket.subject

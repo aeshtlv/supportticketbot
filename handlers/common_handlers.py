@@ -142,7 +142,7 @@ async def cmd_tickets(message: Message, state: FSMContext):
                 await state.set_state(OperatorState.OP_IDLE)
                 await message.answer(
                     f"📥 <b>Открытые тикеты</b> ({len(tickets)})\n\n"
-                    f"🔵 new · 🟡 work · 🟠 wait",
+                    f"⚪ new · 🟠 work · 🔴 wait",
                     reply_markup=OperatorKeyboards.tickets_list(tickets),
                     parse_mode="HTML"
                 )
@@ -162,7 +162,7 @@ async def cmd_tickets(message: Message, state: FSMContext):
             await state.set_state(UserState.IDLE)
             await message.answer(
                 "📂 <b>Мои обращения</b>\n\n"
-                "🔵 открыт · 🟡 в работе · 🟠 ждёт ответа",
+                "⚪ открыт · 🟠 в работе · 🔴 ждёт ответа",
                 reply_markup=UserKeyboards.tickets_list(tickets),
                 parse_mode="HTML"
             )
@@ -199,8 +199,8 @@ async def cmd_stats(message: Message, state: FSMContext):
             f"└ В работе: {my_stats['active']}\n\n"
             f"<b>🌐 Общая:</b>\n"
             f"├ Всего: {global_stats['total']}\n"
-            f"├ 🔵 Открыто: {global_stats.get('open', 0)}\n"
-            f"├ 🟡 В работе: {global_stats.get('in_progress', 0)}\n"
+            f"├ ⚪ Открыто: {global_stats.get('open', 0)}\n"
+            f"├ 🟠 В работе: {global_stats.get('in_progress', 0)}\n"
             f"├ 🟠 Ждут: {global_stats.get('waiting_user', 0)}\n"
             f"└ ⚫ Закрыто: {global_stats.get('closed', 0)}"
         )

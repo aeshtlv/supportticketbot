@@ -86,7 +86,7 @@ async def cb_my_tickets(callback: CallbackQuery, state: FSMContext):
         await state.set_state(UserState.IDLE)
         await callback.message.edit_text(
             "📂 <b>Мои обращения</b>\n\n"
-            "🔵 открыт · 🟡 в работе · 🟠 ждёт ответа",
+            "⚪ открыт · 🟠 в работе · 🔴 ждёт ответа",
             reply_markup=UserKeyboards.tickets_list(tickets),
             parse_mode="HTML"
         )
@@ -131,8 +131,8 @@ async def cb_view_ticket(callback: CallbackQuery, state: FSMContext):
             return
         
         status_text = {
-            TicketStatus.OPEN: "🔵 Открыт",
-            TicketStatus.IN_PROGRESS: "🟡 В обработке",
+            TicketStatus.OPEN: "⚪ Открыт",
+            TicketStatus.IN_PROGRESS: "🟠 В обработке",
             TicketStatus.WAITING_USER: "🟠 Ожидает вашего ответа",
             TicketStatus.CLOSED: "⚫ Закрыт"
         }.get(ticket.status, "?")

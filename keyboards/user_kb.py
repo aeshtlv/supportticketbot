@@ -46,9 +46,9 @@ class UserKeyboards:
         if active:
             for ticket in active[:5]:
                 status_emoji = {
-                    TicketStatus.OPEN: "🔵",
-                    TicketStatus.IN_PROGRESS: "🟡",
-                    TicketStatus.WAITING_USER: "🟠",
+                    TicketStatus.OPEN: "⚪",
+                    TicketStatus.IN_PROGRESS: "🟠",
+                    TicketStatus.WAITING_USER: "🔴",
                 }.get(ticket.status, "⚪")
                 
                 subject = ticket.subject[:25] + "…" if len(ticket.subject) > 25 else ticket.subject

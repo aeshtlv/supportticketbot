@@ -106,7 +106,7 @@ async def cb_op_list_tickets(callback: CallbackQuery, state: FSMContext):
             await state.set_state(OperatorState.OP_IDLE)
             await callback.message.edit_text(
                 f"📥 <b>Открытые тикеты</b> ({len(tickets)})\n\n"
-                f"🔵 new · 🟡 work · 🟠 wait",
+                f"⚪ new · 🟠 work · 🔴 wait",
                 reply_markup=OperatorKeyboards.tickets_list(tickets),
                 parse_mode="HTML"
             )
@@ -142,8 +142,8 @@ async def cb_op_filter(callback: CallbackQuery, state: FSMContext):
         return
     
     status_names = {
-        TicketStatus.OPEN: "🔵 Новые",
-        TicketStatus.IN_PROGRESS: "🟡 В работе",
+        TicketStatus.OPEN: "⚪ Новые",
+        TicketStatus.IN_PROGRESS: "🟠 В работе",
         TicketStatus.WAITING_USER: "🟠 Ждут ответа"
     }
     
@@ -244,8 +244,8 @@ async def cb_op_stats(callback: CallbackQuery, state: FSMContext):
             f"└ В работе: {my_stats['active']}\n\n"
             f"<b>🌐 Общая статистика:</b>\n"
             f"├ Всего тикетов: {global_stats['total']}\n"
-            f"├ 🔵 Открытых: {global_stats.get('open', 0)}\n"
-            f"├ 🟡 В работе: {global_stats.get('in_progress', 0)}\n"
+            f"├ ⚪ Открытых: {global_stats.get('open', 0)}\n"
+            f"├ 🟠 В работе: {global_stats.get('in_progress', 0)}\n"
             f"├ 🟠 Ждут ответа: {global_stats.get('waiting_user', 0)}\n"
             f"└ ⚫ Закрыто: {global_stats.get('closed', 0)}"
         )
@@ -273,7 +273,7 @@ async def cb_op_search(callback: CallbackQuery, state: FSMContext):
     
     await callback.message.edit_text(
         "🔍 <b>Поиск тикета</b>\n\n"
-        "Введите код тикета (например: TCK-A1B2)",
+        "Введите код тикета (например: SHFT-A1B2)",
         reply_markup=OperatorKeyboards.search_cancel(),
         parse_mode="HTML"
     )
@@ -836,8 +836,8 @@ async def process_op_view_message(message: Message, state: FSMContext):
 def format_ticket_view(ticket, messages) -> str:
     """Форматирование карточки тикета"""
     status_info = {
-        TicketStatus.OPEN: ("🔵", "Открыт"),
-        TicketStatus.IN_PROGRESS: ("🟡", "В работе"),
+        TicketStatus.OPEN: ("⚪", "Открыт"),
+        TicketStatus.IN_PROGRESS: ("🟠", "В работе"),
         TicketStatus.WAITING_USER: ("🟠", "Ждём ответа"),
         TicketStatus.CLOSED: ("⚫", "Закрыт")
     }

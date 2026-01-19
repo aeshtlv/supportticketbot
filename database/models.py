@@ -89,8 +89,12 @@ class Ticket(Base):
     
     @staticmethod
     def generate_code() -> str:
-        """Генерирует уникальный код тикета вида TCK-XXXX"""
-        return f"TCK-{secrets.token_hex(2).upper()}"
+        """Генерирует уникальный код тикета вида SHFT-XXXX"""
+        import random
+        import string
+        chars = string.ascii_uppercase + string.digits
+        code = ''.join(random.choices(chars, k=4))
+        return f"SHFT-{code}"
 
 
 class TicketMessage(Base):
