@@ -1,10 +1,10 @@
 """
-Сервис для работы с тикетами и сообщениями
+Сервис для работы с тикетами
 """
 from datetime import datetime
 from typing import Optional
 
-from sqlalchemy import select, func
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -12,36 +12,20 @@ from database.models import Ticket, TicketStatus, User, MessageLink, BotSettings
 
 
 class TicketService:
-    """Сервис для работы с тикетами"""
-    
     def __init__(self, session: AsyncSession):
         self.session = session
     
-    # ==================== ПОЛЬЗОВАТЕЛИ ====================
-    
-    async def get_or_create_user(
-        self, 
-        telegram_id: int, 
-        username: Optional[str] = None,
-        full_name: str = "Unknown"
-    ) -> User:
+    async def get_or_create_user(self, telegram_id: int, username: Optional[str] = None, full_name: str = "Unknown") -> User:
         """Получить или создать пользователя"""
-        result = await self.session.execute(
-            select(User).where(User.telegram_id == telegram_id)
-        )
+        result = await self.session.execute(select(User).where(User.telegram_id == telegram_id))
         user = result.scalar_one_or_none()
         
         if user is None:
-            user = User(
-                telegram_id=telegram_id,
-                username=username,
-                full_name=full_name
-            )
+            user = User(telegram_id=telegram_id, username=username, full_name=full_name)
             self.session.add(user)
             await self.session.commit()
             await self.session.refresh(user)
         else:
-            # Обновляем данные
             if username != user.username or full_name != user.full_name:
                 user.username = username
                 user.full_name = full_name
@@ -51,9 +35,7 @@ class TicketService:
     
     async def get_user_by_telegram_id(self, telegram_id: int) -> Optional[User]:
         """Получить пользователя по telegram_id"""
-        result = await self.session.execute(
-            select(User).where(User.telegram_id == telegram_id)
-        )
+        result = await self.session.execute(select(User).where(User.telegram_id == telegram_id))
         return result.scalar_one_or_none()
     
     async def ban_user(self, user: User) -> User:
@@ -70,27 +52,17 @@ class TicketService:
         await self.session.refresh(user)
         return user
     
-    # ==================== ТИКЕТЫ ====================
-    
     async def get_or_create_ticket(self, user: User, topic_id: Optional[int] = None) -> Ticket:
-        """Получить открытый тикет пользователя или создать новый"""
+        """Получить открытый тикет или создать новый"""
         result = await self.session.execute(
             select(Ticket)
-            .where(
-                Ticket.user_id == user.id,
-                Ticket.status == TicketStatus.OPEN
-            )
+            .where(Ticket.user_id == user.id, Ticket.status == TicketStatus.OPEN)
             .order_by(Ticket.created_at.desc())
         )
         ticket = result.scalar_one_or_none()
         
         if ticket is None:
-            ticket = Ticket(
-                ticket_id=Ticket.generate_id(),
-                user_id=user.id,
-                status=TicketStatus.OPEN,
-                topic_id=topic_id
-            )
+            ticket = Ticket(ticket_id=Ticket.generate_id(), user_id=user.id, status=TicketStatus.OPEN, topic_id=topic_id)
             self.session.add(ticket)
             await self.session.commit()
             await self.session.refresh(ticket)
@@ -104,21 +76,14 @@ class TicketService:
     async def get_ticket_by_id(self, ticket_id: str) -> Optional[Ticket]:
         """Получить тикет по ID"""
         result = await self.session.execute(
-            select(Ticket)
-            .options(selectinload(Ticket.user))
-            .where(Ticket.ticket_id == ticket_id)
+            select(Ticket).options(selectinload(Ticket.user)).where(Ticket.ticket_id == ticket_id)
         )
         return result.scalar_one_or_none()
     
     async def get_user_ticket(self, user: User) -> Optional[Ticket]:
         """Получить открытый тикет пользователя"""
         result = await self.session.execute(
-            select(Ticket)
-            .where(
-                Ticket.user_id == user.id,
-                Ticket.status == TicketStatus.OPEN
-            )
-            .order_by(Ticket.created_at.desc())
+            select(Ticket).where(Ticket.user_id == user.id, Ticket.status == TicketStatus.OPEN).order_by(Ticket.created_at.desc())
         )
         return result.scalar_one_or_none()
     
@@ -141,23 +106,11 @@ class TicketService:
     async def get_open_tickets(self) -> list[Ticket]:
         """Получить все открытые тикеты"""
         result = await self.session.execute(
-            select(Ticket)
-            .options(selectinload(Ticket.user))
-            .where(Ticket.status == TicketStatus.OPEN)
-            .order_by(Ticket.created_at.desc())
+            select(Ticket).options(selectinload(Ticket.user)).where(Ticket.status == TicketStatus.OPEN).order_by(Ticket.created_at.desc())
         )
         return list(result.scalars().all())
     
-    # ==================== СООБЩЕНИЯ ====================
-    
-    async def create_message_link(
-        self,
-        ticket: Ticket,
-        user: User,
-        user_message_id: int,
-        support_message_id: int,
-        topic_id: Optional[int] = None
-    ) -> MessageLink:
+    async def create_message_link(self, ticket: Ticket, user: User, user_message_id: int, support_message_id: int, topic_id: Optional[int] = None) -> MessageLink:
         """Создать связь между сообщениями"""
         link = MessageLink(
             ticket_id=ticket.id,
@@ -180,21 +133,15 @@ class TicketService:
         )
         return result.scalar_one_or_none()
     
-    # ==================== НАСТРОЙКИ ====================
-    
     async def get_setting(self, key: str, default: str = "") -> str:
         """Получить настройку"""
-        result = await self.session.execute(
-            select(BotSettings).where(BotSettings.key == key)
-        )
+        result = await self.session.execute(select(BotSettings).where(BotSettings.key == key))
         setting = result.scalar_one_or_none()
         return setting.value if setting else default
     
     async def set_setting(self, key: str, value: str) -> BotSettings:
         """Установить настройку"""
-        result = await self.session.execute(
-            select(BotSettings).where(BotSettings.key == key)
-        )
+        result = await self.session.execute(select(BotSettings).where(BotSettings.key == key))
         setting = result.scalar_one_or_none()
         
         if setting:

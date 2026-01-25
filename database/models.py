@@ -2,9 +2,8 @@
 Модели базы данных
 """
 import enum
-import secrets
-import string
 import random
+import string
 from datetime import datetime
 from typing import Optional
 
@@ -33,9 +32,8 @@ class User(Base):
     is_banned: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     
-    # Отношения
     tickets: Mapped[list["Ticket"]] = relationship("Ticket", back_populates="user")
-    messages: Mapped[list["MessageLink"]] = relationship("MessageLink", back_populates="user")
+    message_links: Mapped[list["MessageLink"]] = relationship("MessageLink", back_populates="user")
 
 
 class Ticket(Base):
@@ -46,15 +44,14 @@ class Ticket(Base):
     ticket_id: Mapped[str] = mapped_column(String(20), unique=True, index=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
     status: Mapped[TicketStatus] = mapped_column(Enum(TicketStatus), default=TicketStatus.OPEN)
-    topic_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)  # ID топика в форуме
+    topic_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())
     closed_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     
-    # Отношения
     user: Mapped["User"] = relationship("User", back_populates="tickets")
-    messages: Mapped[list["MessageLink"]] = relationship("MessageLink", back_populates="ticket")
+    message_links: Mapped[list["MessageLink"]] = relationship("MessageLink", back_populates="ticket")
     
     @staticmethod
     def generate_id() -> str:
@@ -71,21 +68,13 @@ class MessageLink(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     ticket_id: Mapped[int] = mapped_column(ForeignKey("tickets.id"))
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
-    
-    # ID сообщения пользователя
     user_message_id: Mapped[int] = mapped_column(BigInteger)
-    
-    # ID сообщения в чате поддержки
     support_message_id: Mapped[int] = mapped_column(BigInteger)
-    
-    # ID топика (если используется форум)
     topic_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
-    
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     
-    # Отношения
-    ticket: Mapped["Ticket"] = relationship("Ticket", back_populates="messages")
-    user: Mapped["User"] = relationship("User", back_populates="messages")
+    ticket: Mapped["Ticket"] = relationship("Ticket", back_populates="message_links")
+    user: Mapped["User"] = relationship("User", back_populates="message_links")
 
 
 class BotSettings(Base):
@@ -96,4 +85,3 @@ class BotSettings(Base):
     key: Mapped[str] = mapped_column(String(50), unique=True, index=True)
     value: Mapped[str] = mapped_column(Text)
     updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())
-
