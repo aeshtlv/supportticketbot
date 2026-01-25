@@ -1,5 +1,5 @@
 from database.connection import Database, get_db
-from database.models import Base, User, Ticket, TicketMessage, TicketStatus
+from database.models import Base, User, Ticket, TicketStatus, MessageLink, BotSettings
 
 __all__ = [
     "Database",
@@ -7,7 +7,7 @@ __all__ = [
     "Base",
     "User",
     "Ticket",
-    "TicketMessage",
     "TicketStatus",
+    "MessageLink",
+    "BotSettings",
 ]
-

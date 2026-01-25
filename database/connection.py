@@ -38,4 +38,3 @@ def get_db() -> Database:
     if _db is None:
         _db = Database()
     return _db
-
