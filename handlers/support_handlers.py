@@ -13,6 +13,13 @@ from database.models import TicketStatus
 router = Router()
 logger = logging.getLogger(__name__)
 
+# Фильтр для сообщений из чата поддержки
+def is_support_chat(message: Message) -> bool:
+    """Проверяет, что сообщение из чата поддержки"""
+    if not SUPPORT_CHAT_ID:
+        return False
+    return str(message.chat.id) == str(SUPPORT_CHAT_ID)
+
 
 async def forward_to_user(bot: Bot, message: Message, user_telegram_id: int):
     """Пересылает ответ пользователю"""
@@ -65,15 +72,14 @@ async def forward_to_user(bot: Bot, message: Message, user_telegram_id: int):
         logger.error(f"Failed to forward to user {user_telegram_id}: {e}")
 
 
-@router.message()
+@router.message(F.func(is_support_chat))
 async def handle_support_reply(message: Message, bot: Bot):
     """Обработка Reply в чате поддержки"""
-    # Проверяем, что сообщение из чата поддержки
-    if not SUPPORT_CHAT_ID or str(message.chat.id) != str(SUPPORT_CHAT_ID):
-        return
+    logger.info(f"Message from support chat {message.chat.id}, reply_to: {message.reply_to_message is not None}")
     
     # Проверяем, что это ответ на сообщение
     if not message.reply_to_message:
+        logger.debug("Not a reply, skipping")
         return
     
     reply_to = message.reply_to_message

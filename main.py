@@ -26,6 +26,8 @@ logger = logging.getLogger(__name__)
 
 async def on_startup(bot: Bot):
     """Действия при запуске"""
+    from config import SUPPORT_CHAT_ID, ADMIN_IDS
+    
     logger.info("Инициализация базы данных...")
     db = get_db()
     await db.init_db()
@@ -33,6 +35,16 @@ async def on_startup(bot: Bot):
     
     bot_info = await bot.get_me()
     logger.info(f"Бот запущен: @{bot_info.username}")
+    logger.info(f"SUPPORT_CHAT_ID: {SUPPORT_CHAT_ID}")
+    logger.info(f"ADMIN_IDS: {ADMIN_IDS}")
+    
+    # Проверяем доступ к чату поддержки
+    if SUPPORT_CHAT_ID:
+        try:
+            chat = await bot.get_chat(SUPPORT_CHAT_ID)
+            logger.info(f"Support chat: {chat.title} (ID: {chat.id})")
+        except Exception as e:
+            logger.error(f"Cannot access support chat: {e}")
 
 
 async def on_shutdown(bot: Bot):
@@ -58,10 +70,11 @@ async def main():
     storage = MemoryStorage()
     dp = Dispatcher(storage=storage)
     
-    # Регистрация роутеров
+    # Регистрация роутеров (порядок важен!)
+    # Сначала админ, потом пользователи, потом поддержка (чтобы поддержка не перехватывала все)
     dp.include_router(admin_router)
-    dp.include_router(support_router)
     dp.include_router(user_router)
+    dp.include_router(support_router)
     
     dp.startup.register(on_startup)
     dp.shutdown.register(on_shutdown)

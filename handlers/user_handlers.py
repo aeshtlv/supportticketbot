@@ -146,31 +146,42 @@ async def forward_to_support(bot: Bot, message: Message, ticket, topic_id: int =
 
 
 @router.message(Command("start"))
-async def cmd_start(message: Message, bot: Bot):
+async def cmd_start(message: Message):
     """Команда /start"""
-    async with get_db().session_factory() as session:
-        service = TicketService(session)
-        
-        # Получаем текст приветствия
-        welcome_text = await service.get_setting("welcome_text", "👋 Привет! Напишите ваш вопрос, и мы поможем.")
-        
-        await message.answer(welcome_text)
+    logger.info(f"Received /start from user {message.from_user.id}")
+    try:
+        async with get_db().session_factory() as session:
+            service = TicketService(session)
+            
+            # Получаем текст приветствия
+            welcome_text = await service.get_setting("welcome_text", "👋 Привет! Напишите ваш вопрос, и мы поможем.")
+            
+            await message.answer(welcome_text)
+            logger.info(f"Sent welcome message to user {message.from_user.id}")
+    except Exception as e:
+        logger.error(f"Error in cmd_start: {e}", exc_info=True)
+        await message.answer("👋 Привет! Напишите ваш вопрос, и мы поможем.")
 
 
 @router.message(Command("help"))
-async def cmd_help(message: Message, bot: Bot):
+async def cmd_help(message: Message):
     """Команда /help"""
-    async with get_db().session_factory() as session:
-        service = TicketService(session)
-        
-        # Получаем текст справки
-        help_text = await service.get_setting("help_text", "📖 Справка\n\nПросто напишите ваш вопрос, и оператор ответит.")
-        
-        await message.answer(help_text)
+    logger.info(f"Received /help from user {message.from_user.id}")
+    try:
+        async with get_db().session_factory() as session:
+            service = TicketService(session)
+            
+            # Получаем текст справки
+            help_text = await service.get_setting("help_text", "📖 Справка\n\nПросто напишите ваш вопрос, и оператор ответит.")
+            
+            await message.answer(help_text)
+    except Exception as e:
+        logger.error(f"Error in cmd_help: {e}", exc_info=True)
+        await message.answer("📖 Справка\n\nПросто напишите ваш вопрос, и оператор ответит.")
 
 
 @router.message(Command("close"))
-async def cmd_close(message: Message, bot: Bot):
+async def cmd_close(message: Message):
     """Команда /close - закрыть свой тикет"""
     async with get_db().session_factory() as session:
         service = TicketService(session)
@@ -192,7 +203,7 @@ async def cmd_close(message: Message, bot: Bot):
 
 
 @router.message(Command("reopen"))
-async def cmd_reopen(message: Message, bot: Bot):
+async def cmd_reopen(message: Message):
     """Команда /reopen - переоткрыть тикет"""
     async with get_db().session_factory() as session:
         service = TicketService(session)
@@ -228,8 +239,11 @@ async def cmd_reopen(message: Message, bot: Bot):
 @router.message()
 async def handle_user_message(message: Message, bot: Bot):
     """Обработка всех сообщений от пользователей"""
+    logger.info(f"Received message from user {message.from_user.id}, type: {message.content_type}")
+    
     # Пропускаем команды
     if message.text and message.text.startswith("/"):
+        logger.debug(f"Skipping command: {message.text}")
         return
     
     async with get_db().session_factory() as session:
