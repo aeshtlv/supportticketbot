@@ -65,9 +65,13 @@ async def forward_to_user(bot: Bot, message: Message, user_telegram_id: int):
         logger.error(f"Failed to forward to user {user_telegram_id}: {e}")
 
 
-@router.message(F.chat.id == int(SUPPORT_CHAT_ID) if SUPPORT_CHAT_ID else False)
+@router.message()
 async def handle_support_reply(message: Message, bot: Bot):
     """Обработка Reply в чате поддержки"""
+    # Проверяем, что сообщение из чата поддержки
+    if not SUPPORT_CHAT_ID or str(message.chat.id) != str(SUPPORT_CHAT_ID):
+        return
+    
     # Проверяем, что это ответ на сообщение
     if not message.reply_to_message:
         return
