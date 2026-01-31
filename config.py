@@ -2,7 +2,7 @@
 Конфигурация бота
 Создайте файл .env с переменными:
     BOT_TOKEN=your_telegram_bot_token_here
-    SUPPORT_CHAT_ID=-1001234567890
+    ADMIN_GROUP_ID=-1001234567890
     ADMIN_IDS=123456789,987654321
 """
 import os
@@ -13,8 +13,8 @@ load_dotenv()
 # Токен бота
 BOT_TOKEN = os.getenv("BOT_TOKEN", "")
 
-# ID чата поддержки (группа/супергруппа)
-SUPPORT_CHAT_ID = os.getenv("SUPPORT_CHAT_ID", "")
+# ID админ-группы с включёнными Topics (Forum)
+ADMIN_GROUP_ID = os.getenv("ADMIN_GROUP_ID", "")
 
 # ID администраторов (через запятую)
 ADMIN_IDS: list[int] = [

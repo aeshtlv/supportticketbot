@@ -1,183 +1,195 @@
 """
-Обработчики для администраторов
+Обработчики для админ-группы
+Администраторы работают в группе с топиками
 """
 import logging
-from aiogram import Router, F
-from aiogram.types import Message, CallbackQuery
+from aiogram import Router, Bot, F
+from aiogram.types import Message
 from aiogram.filters import Command
-from aiogram.fsm.context import FSMContext
-from aiogram.fsm.state import State, StatesGroup
+from aiogram.enums import ContentType
 
-from config import ADMIN_IDS
+from config import ADMIN_GROUP_ID, ADMIN_IDS
 from database import get_db
 from services import TicketService
+from database.models import TicketStatus, Ticket
 
 router = Router()
 logger = logging.getLogger(__name__)
 
 
+def is_admin_group(message: Message) -> bool:
+    """Проверяет, что сообщение из админ-группы"""
+    if not ADMIN_GROUP_ID:
+        return False
+    return str(message.chat.id) == str(ADMIN_GROUP_ID)
+
+
 def is_admin(user_id: int) -> bool:
-    """Проверка, является ли пользователь администратором"""
+    """Проверяет, является ли пользователь администратором"""
     return user_id in ADMIN_IDS
 
 
-class AdminStates(StatesGroup):
-    """Состояния для админ-панели"""
-    EDIT_WELCOME = State()
-    EDIT_HELP = State()
-
-
-@router.message(Command("admin"))
-async def cmd_admin(message: Message):
-    """Админ-панель"""
-    if not is_admin(message.from_user.id):
-        await message.answer("❌ Доступ запрещён")
+@router.message(Command("close"))
+async def cmd_close(message: Message, bot: Bot):
+    """
+    Команда /close - закрыть тикет
+    
+    Использование: /close в топике
+    """
+    if not is_admin_group(message):
         return
     
-    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
-    
-    keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="✏️ Изменить приветствие", callback_data="admin:edit_welcome")],
-        [InlineKeyboardButton(text="✏️ Изменить справку", callback_data="admin:edit_help")],
-        [InlineKeyboardButton(text="📁 Режим топиков", callback_data="admin:topic_mode")],
-        [InlineKeyboardButton(text="📊 Открытые тикеты", callback_data="admin:open_tickets")]
-    ])
-    
-    try:
-        async with get_db().session_factory() as session:
-            service = TicketService(session)
-            topic_mode = await service.get_setting("topic_mode", "separate")
-            mode_text = "Отдельный топик для каждого" if topic_mode == "separate" else "Общий топик"
-            
-            await message.answer(
-                f"⚙️ <b>Админ-панель</b>\n\n📁 Режим топиков: {mode_text}",
-                reply_markup=keyboard,
-                parse_mode="HTML"
-            )
-    except Exception as e:
-        logger.error(f"Error in cmd_admin: {e}", exc_info=True)
-
-
-@router.message(Command("open_tickets"))
-async def cmd_open_tickets(message: Message):
-    """Команда /open_tickets"""
     if not is_admin(message.from_user.id):
-        await message.answer("❌ Доступ запрещён")
+        return
+    
+    # Проверяем, что команда вызвана в топике
+    if not message.message_thread_id:
+        await message.reply("❌ Команда /close должна быть вызвана в топике тикета.")
         return
     
     try:
         async with get_db().session_factory() as session:
             service = TicketService(session)
-            tickets = await service.get_open_tickets()
             
-            if not tickets:
-                await message.answer("📭 Нет открытых тикетов")
+            # Находим тикет по topic_id
+            ticket = await service.get_ticket_by_topic_id(message.message_thread_id)
+            
+            if not ticket:
+                await message.reply("❌ Тикет не найден для этого топика.")
                 return
             
-            text = f"📊 <b>Открытые тикеты</b> ({len(tickets)})\n\n"
+            if ticket.status == TicketStatus.CLOSED:
+                await message.reply("ℹ️ Тикет уже закрыт.")
+                return
             
-            for ticket in tickets[:20]:
-                user_info = f"@{ticket.user.username}" if ticket.user.username else ticket.user.full_name
-                text += f"🟢 <code>{ticket.ticket_id}</code> | {user_info}\n"
+            # Закрываем тикет
+            await service.close_ticket(ticket)
             
-            if len(tickets) > 20:
-                text += f"\n... и ещё {len(tickets) - 20}"
-            
-            await message.answer(text, parse_mode="HTML")
-    except Exception as e:
-        logger.error(f"Error in cmd_open_tickets: {e}", exc_info=True)
-
-
-@router.callback_query(F.data.startswith("admin:"))
-async def handle_admin_callback(callback: CallbackQuery, state: FSMContext):
-    """Обработка callback админ-панели"""
-    if not is_admin(callback.from_user.id):
-        await callback.answer("Доступ запрещён", show_alert=True)
-        return
-    
-    try:
-        if callback.data == "admin:edit_welcome":
-            await state.set_state(AdminStates.EDIT_WELCOME)
-            await callback.message.edit_text(
-                "✏️ <b>Редактирование приветствия</b>\n\nОтправьте новый текст для команды /start:",
-                parse_mode="HTML"
-            )
-            await callback.answer()
-        
-        elif callback.data == "admin:edit_help":
-            await state.set_state(AdminStates.EDIT_HELP)
-            await callback.message.edit_text(
-                "✏️ <b>Редактирование справки</b>\n\nОтправьте новый текст для команды /help:",
-                parse_mode="HTML"
-            )
-            await callback.answer()
-        
-        elif callback.data == "admin:topic_mode":
-            async with get_db().session_factory() as session:
-                service = TicketService(session)
-                current_mode = await service.get_setting("topic_mode", "separate")
-                new_mode = "common" if current_mode == "separate" else "separate"
-                await service.set_setting("topic_mode", new_mode)
-                mode_text = "Отдельный топик для каждого" if new_mode == "separate" else "Общий топик"
-                await callback.message.edit_text(
-                    f"✅ <b>Режим топиков изменён</b>\n\n📁 Текущий режим: {mode_text}",
-                    parse_mode="HTML"
+            # Обновляем название топика
+            topic_name = format_topic_name_closed(ticket)
+            try:
+                await bot.edit_forum_topic(
+                    chat_id=int(ADMIN_GROUP_ID),
+                    message_thread_id=ticket.topic_id,
+                    name=topic_name
                 )
-            await callback.answer("✅ Режим изменён")
-        
-        elif callback.data == "admin:open_tickets":
-            async with get_db().session_factory() as session:
-                service = TicketService(session)
-                tickets = await service.get_open_tickets()
-                
-                if not tickets:
-                    await callback.message.edit_text("📭 Нет открытых тикетов")
-                    await callback.answer()
-                    return
-                
-                text = f"📊 <b>Открытые тикеты</b> ({len(tickets)})\n\n"
-                for ticket in tickets[:20]:
-                    user_info = f"@{ticket.user.username}" if ticket.user.username else ticket.user.full_name
-                    text += f"🟢 <code>{ticket.ticket_id}</code> | {user_info}\n"
-                
-                if len(tickets) > 20:
-                    text += f"\n... и ещё {len(tickets) - 20}"
-                
-                await callback.message.edit_text(text, parse_mode="HTML")
-            await callback.answer()
+            except Exception as e:
+                logger.error(f"Failed to update topic name: {e}")
+            
+            # Уведомляем пользователя
+            try:
+                await bot.send_message(
+                    ticket.user_chat_id,
+                    f"✅ Ваше обращение #{ticket.ticket_id} закрыто.\n\n"
+                    f"Если у вас возникнут новые вопросы, напишите нам снова."
+                )
+            except Exception as e:
+                logger.error(f"Failed to notify user about ticket closure: {e}")
+            
+            await message.reply(f"✅ Тикет #{ticket.ticket_id} закрыт. Пользователь уведомлён.")
+            logger.info(f"Ticket {ticket.ticket_id} closed by admin {message.from_user.id}")
             
     except Exception as e:
-        logger.error(f"Error in handle_admin_callback: {e}", exc_info=True)
-        await callback.answer("❌ Ошибка", show_alert=True)
+        logger.error(f"Error in cmd_close: {e}", exc_info=True)
+        await message.reply("❌ Ошибка при закрытии тикета.")
 
 
-@router.message(AdminStates.EDIT_WELCOME)
-async def process_welcome_text(message: Message, state: FSMContext):
-    """Сохранить новое приветствие"""
-    if not is_admin(message.from_user.id):
+@router.message(F.func(is_admin_group))
+async def handle_admin_message(message: Message, bot: Bot):
+    """
+    Обработка сообщений администраторов в топиках
+    
+    Логика:
+    1. Игнорируем сообщения вне топиков
+    2. Игнорируем служебные события форума
+    3. Игнорируем команды (они обрабатываются отдельно)
+    4. Пересылаем сообщение пользователю, который создал тикет
+    """
+    # Игнорируем сообщения вне топиков
+    if not message.message_thread_id:
+        logger.debug(f"Message from admin group without topic_id, ignoring")
+        return
+    
+    # Игнорируем служебные события форума
+    if message.content_type in [
+        ContentType.FORUM_TOPIC_CREATED,
+        ContentType.FORUM_TOPIC_CLOSED,
+        ContentType.FORUM_TOPIC_REOPENED,
+        ContentType.FORUM_TOPIC_EDITED,
+        ContentType.GENERAL_FORUM_TOPIC_HIDDEN,
+        ContentType.GENERAL_FORUM_TOPIC_UNHIDDEN,
+    ]:
+        return
+    
+    # Игнорируем команды
+    if message.text and message.text.startswith("/"):
+        return
+    
+    # Игнорируем сообщения от ботов
+    if message.from_user and message.from_user.is_bot:
         return
     
     try:
         async with get_db().session_factory() as session:
             service = TicketService(session)
-            await service.set_setting("welcome_text", message.text)
-        await state.clear()
-        await message.answer("✅ Приветствие обновлено!")
+            
+            # Находим тикет по topic_id
+            ticket = await service.get_ticket_by_topic_id(message.message_thread_id)
+            
+            if not ticket:
+                logger.warning(f"Ticket not found for topic_id={message.message_thread_id}")
+                return
+            
+            if ticket.status == TicketStatus.CLOSED:
+                logger.debug(f"Ticket {ticket.ticket_id} is closed, ignoring message")
+                return
+            
+            # Пересылаем сообщение пользователю
+            logger.info(
+                f"Forwarding message from admin {message.from_user.id} "
+                f"to user {ticket.user_id} (ticket {ticket.ticket_id})"
+            )
+            
+            await forward_to_user(bot, message, ticket.user_chat_id)
+            
     except Exception as e:
-        logger.error(f"Error in process_welcome_text: {e}", exc_info=True)
+        logger.error(f"Error in handle_admin_message: {e}", exc_info=True)
 
 
-@router.message(AdminStates.EDIT_HELP)
-async def process_help_text(message: Message, state: FSMContext):
-    """Сохранить новую справку"""
-    if not is_admin(message.from_user.id):
-        return
-    
+async def forward_to_user(bot: Bot, message: Message, user_chat_id: int):
+    """Пересылает сообщение пользователю"""
     try:
-        async with get_db().session_factory() as session:
-            service = TicketService(session)
-            await service.set_setting("help_text", message.text)
-        await state.clear()
-        await message.answer("✅ Справка обновлена!")
+        from aiogram.enums import ContentType
+        
+        if message.content_type == ContentType.TEXT:
+            await bot.send_message(user_chat_id, message.text)
+        elif message.content_type == ContentType.PHOTO:
+            await bot.send_photo(user_chat_id, message.photo[-1].file_id, caption=message.caption)
+        elif message.content_type == ContentType.VIDEO:
+            await bot.send_video(user_chat_id, message.video.file_id, caption=message.caption)
+        elif message.content_type == ContentType.DOCUMENT:
+            await bot.send_document(user_chat_id, message.document.file_id, caption=message.caption)
+        elif message.content_type == ContentType.VOICE:
+            await bot.send_voice(user_chat_id, message.voice.file_id, caption=message.caption)
+        elif message.content_type == ContentType.AUDIO:
+            await bot.send_audio(user_chat_id, message.audio.file_id, caption=message.caption)
+        elif message.content_type == ContentType.VIDEO_NOTE:
+            await bot.send_video_note(user_chat_id, message.video_note.file_id)
+        elif message.content_type == ContentType.STICKER:
+            await bot.send_sticker(user_chat_id, message.sticker.file_id)
+        elif message.content_type == ContentType.ANIMATION:
+            await bot.send_animation(user_chat_id, message.animation.file_id, caption=message.caption)
+        else:
+            await bot.send_message(user_chat_id, f"[Неподдерживаемый тип: {message.content_type}]")
+        
+        logger.info(f"✅ Successfully forwarded message to user {user_chat_id}")
+        
     except Exception as e:
-        logger.error(f"Error in process_help_text: {e}", exc_info=True)
+        logger.error(f"Failed to forward to user {user_chat_id}: {e}", exc_info=True)
+
+
+def format_topic_name_closed(ticket: Ticket) -> str:
+    """Форматирует название топика для закрытого тикета"""
+    username_part = f"@{ticket.username}" if ticket.username else ticket.full_name
+    return f"🔴 {ticket.ticket_id} | {ticket.user_id} | {username_part}"
+

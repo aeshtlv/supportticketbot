@@ -1,6 +1,6 @@
 """
-Telegram Support Bot
-Система пересылки сообщений с Reply в групповой чат
+Telegram Support Bot для shftsecure
+Система тикетов на основе топиков форума
 """
 import asyncio
 import logging
@@ -11,9 +11,9 @@ from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 from aiogram.fsm.storage.memory import MemoryStorage
 
-from config import BOT_TOKEN
+from config import BOT_TOKEN, ADMIN_GROUP_ID, ADMIN_IDS
 from database import get_db
-from handlers import user_router, support_router, admin_router
+from handlers import user_router, admin_router
 
 
 logging.basicConfig(
@@ -26,8 +26,6 @@ logger = logging.getLogger(__name__)
 
 async def on_startup(bot: Bot):
     """Действия при запуске"""
-    from config import SUPPORT_CHAT_ID, ADMIN_IDS
-    
     logger.info("Инициализация базы данных...")
     db = get_db()
     await db.init_db()
@@ -35,16 +33,16 @@ async def on_startup(bot: Bot):
     
     bot_info = await bot.get_me()
     logger.info(f"Бот запущен: @{bot_info.username}")
-    logger.info(f"SUPPORT_CHAT_ID: {SUPPORT_CHAT_ID}")
+    logger.info(f"ADMIN_GROUP_ID: {ADMIN_GROUP_ID}")
     logger.info(f"ADMIN_IDS: {ADMIN_IDS}")
     
-    # Проверяем доступ к чату поддержки
-    if SUPPORT_CHAT_ID:
+    # Проверяем доступ к админ-группе
+    if ADMIN_GROUP_ID:
         try:
-            chat = await bot.get_chat(SUPPORT_CHAT_ID)
-            logger.info(f"Support chat: {chat.title} (ID: {chat.id})")
+            chat = await bot.get_chat(ADMIN_GROUP_ID)
+            logger.info(f"Admin group: {chat.title} (ID: {chat.id})")
         except Exception as e:
-            logger.error(f"Cannot access support chat: {e}")
+            logger.error(f"Cannot access admin group: {e}")
 
 
 async def on_shutdown(bot: Bot):
@@ -62,6 +60,10 @@ async def main():
         logger.error("BOT_TOKEN не установлен! Создайте файл .env с токеном бота.")
         sys.exit(1)
     
+    if not ADMIN_GROUP_ID:
+        logger.error("ADMIN_GROUP_ID не установлен! Укажите ID админ-группы в .env")
+        sys.exit(1)
+    
     bot = Bot(
         token=BOT_TOKEN,
         default=DefaultBotProperties(parse_mode=ParseMode.HTML)
@@ -70,11 +72,10 @@ async def main():
     storage = MemoryStorage()
     dp = Dispatcher(storage=storage)
     
-    # Регистрация роутеров (порядок важен!)
-    # Сначала админ, потом пользователи, потом поддержка (чтобы поддержка не перехватывала все)
+    # Регистрация роутеров
+    # Порядок важен: сначала админы, потом пользователи
     dp.include_router(admin_router)
     dp.include_router(user_router)
-    dp.include_router(support_router)
     
     dp.startup.register(on_startup)
     dp.shutdown.register(on_shutdown)

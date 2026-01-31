@@ -19,34 +19,9 @@ class Database:
         )
     
     async def init_db(self):
-        """Инициализация БД - создание таблиц и миграции"""
+        """Инициализация БД - создание таблиц"""
         async with self.engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
-        
-        # Миграции для добавления новых колонок
-        await self._migrate_db()
-    
-    async def _migrate_db(self):
-        """Выполняет миграции базы данных"""
-        from sqlalchemy import text
-        
-        async with self.engine.begin() as conn:
-            # Проверяем и добавляем колонку is_banned если её нет
-            try:
-                await conn.execute(text("ALTER TABLE users ADD COLUMN is_banned BOOLEAN DEFAULT 0"))
-            except Exception:
-                pass
-            
-            # Проверяем и добавляем другие колонки если нужно
-            try:
-                await conn.execute(text("ALTER TABLE tickets ADD COLUMN topic_id INTEGER"))
-            except Exception:
-                pass
-            
-            try:
-                await conn.execute(text("ALTER TABLE message_links ADD COLUMN topic_id INTEGER"))
-            except Exception:
-                pass
     
     async def close(self):
         """Закрытие соединения"""
