@@ -140,14 +140,18 @@ async def handle_user_message(message: Message, bot: Bot):
                         
                         if profile_info:
                             try:
-                                await bot.pin_chat_message(
+                                # В aiogram 3.x pin_chat_message не поддерживает message_thread_id напрямую
+                                # Используем прямой вызов API
+                                from aiogram.methods import PinChatMessage
+                                
+                                await bot(PinChatMessage(
                                     chat_id=int(ADMIN_GROUP_ID),
                                     message_id=profile_info.message_id,
                                     message_thread_id=topic_id
-                                )
+                                ))
                                 logger.info(f"Pinned profile info message in topic {topic_id}")
                             except Exception as e:
-                                logger.error(f"Failed to pin message: {e}")
+                                logger.warning(f"Failed to pin message (may not be supported): {e}")
                         
                         # Отправляем первое сообщение в топик
                         await send_message_to_topic_safe(bot, message, topic_id)
