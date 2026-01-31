@@ -28,6 +28,15 @@ class TicketService:
         )
         return result.scalar_one_or_none()
     
+    async def get_last_ticket_by_user(self, user_id: int) -> Optional[Ticket]:
+        """Получить последний тикет пользователя (включая закрытые)"""
+        result = await self.session.execute(
+            select(Ticket)
+            .where(Ticket.user_id == user_id)
+            .order_by(Ticket.created_at.desc())
+        )
+        return result.scalar_one_or_none()
+    
     async def create_ticket(
         self,
         user_id: int,
@@ -67,6 +76,14 @@ class TicketService:
         """Закрыть тикет"""
         ticket.status = TicketStatus.CLOSED
         ticket.closed_at = datetime.utcnow()
+        await self.session.commit()
+        await self.session.refresh(ticket)
+        return ticket
+    
+    async def reopen_ticket(self, ticket: Ticket) -> Ticket:
+        """Переоткрыть тикет"""
+        ticket.status = TicketStatus.OPEN
+        ticket.closed_at = None
         await self.session.commit()
         await self.session.refresh(ticket)
         return ticket

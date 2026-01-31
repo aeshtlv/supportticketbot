@@ -3,14 +3,18 @@
 Пользователи пишут боту в личные сообщения
 """
 import logging
+import asyncio
 from aiogram import Router, Bot
 from aiogram.types import Message
 from aiogram.filters import Command
+from aiogram.enums import ContentType
+from aiogram.exceptions import TelegramRetryAfter
 
 from config import ADMIN_GROUP_ID
 from database import get_db
-from database.models import Ticket
+from database.models import Ticket, TicketStatus
 from services import TicketService
+from utils import rate_limiter
 
 router = Router()
 logger = logging.getLogger(__name__)
@@ -41,12 +45,21 @@ async def handle_user_message(message: Message, bot: Bot):
     Обработка всех сообщений от пользователей
     
     Логика:
-    1. Проверяем, есть ли у пользователя открытый тикет
-    2. Если есть - отправляем сообщение в существующий топик
-    3. Если нет - создаём новый тикет и новый топик
+    1. Проверка на спам (rate limiting)
+    2. Проверяем, есть ли у пользователя открытый тикет
+    3. Если есть - отправляем сообщение в существующий топик
+    4. Если нет - проверяем закрытый тикет и переоткрываем или создаём новый
     """
     # Пропускаем команды
     if message.text and message.text.startswith("/"):
+        return
+    
+    # Защита от спама
+    is_allowed, wait_seconds = await rate_limiter.check_rate_limit(message.from_user.id)
+    if not is_allowed:
+        await message.answer(
+            f"⏳ Слишком много сообщений. Подождите {wait_seconds} секунд."
+        )
         return
     
     try:
@@ -68,46 +81,140 @@ async def handle_user_message(message: Message, bot: Bot):
                     await message.answer("❌ Ошибка: тикет не привязан к топику. Обратитесь к администратору.")
                     return
                 
-                # Отправляем сообщение в топик
-                await send_message_to_topic(bot, message, ticket.topic_id)
+                # Отправляем сообщение в топик с обработкой flood control
+                await send_message_to_topic_safe(bot, message, ticket.topic_id)
                 
             else:
-                # Создаём новый тикет
-                logger.info(f"Creating new ticket for user {user_id}")
+                # Проверяем, есть ли закрытый тикет для переоткрытия
+                last_ticket = await service.get_last_ticket_by_user(user_id)
                 
-                ticket = await service.create_ticket(
-                    user_id=user_id,
-                    user_chat_id=user_chat_id,
-                    username=message.from_user.username,
-                    full_name=message.from_user.full_name
-                )
-                
-                # Создаём топик в админ-группе
-                topic_name = format_topic_name(ticket)
-                
-                try:
-                    topic = await bot.create_forum_topic(
-                        chat_id=int(ADMIN_GROUP_ID),
-                        name=topic_name
+                if last_ticket and last_ticket.status == TicketStatus.CLOSED and last_ticket.topic_id:
+                    # Переоткрываем закрытый тикет
+                    logger.info(f"Reopening closed ticket {last_ticket.ticket_id} (topic_id={last_ticket.topic_id})")
+                    
+                    await service.reopen_ticket(last_ticket)
+                    
+                    # Обновляем название топика
+                    topic_name = format_topic_name(last_ticket)
+                    try:
+                        await bot.edit_forum_topic(
+                            chat_id=int(ADMIN_GROUP_ID),
+                            message_thread_id=last_ticket.topic_id,
+                            name=topic_name
+                        )
+                    except Exception as e:
+                        logger.error(f"Failed to update topic name: {e}")
+                    
+                    # Отправляем сообщение в переоткрытый топик
+                    await send_message_to_topic_safe(bot, message, last_ticket.topic_id)
+                    
+                    await message.answer("✅ Ваше обращение переоткрыто. Администратор скоро ответит.")
+                    
+                else:
+                    # Создаём новый тикет
+                    logger.info(f"Creating new ticket for user {user_id}")
+                    
+                    ticket = await service.create_ticket(
+                        user_id=user_id,
+                        user_chat_id=user_chat_id,
+                        username=message.from_user.username,
+                        full_name=message.from_user.full_name
                     )
-                    topic_id = topic.message_thread_id
                     
-                    # Сохраняем topic_id в тикет
-                    await service.set_topic_id(ticket, topic_id)
-                    logger.info(f"Created topic {topic_id} for ticket {ticket.ticket_id}")
+                    # Создаём топик в админ-группе
+                    topic_name = format_topic_name(ticket)
                     
-                    # Отправляем первое сообщение в топик
-                    await send_message_to_topic(bot, message, topic_id)
-                    
-                    await message.answer("✅ Ваше обращение создано. Администратор скоро ответит.")
-                    
-                except Exception as e:
-                    logger.error(f"Failed to create forum topic: {e}", exc_info=True)
-                    await message.answer("❌ Не удалось создать обращение. Попробуйте позже.")
+                    try:
+                        topic = await bot.create_forum_topic(
+                            chat_id=int(ADMIN_GROUP_ID),
+                            name=topic_name
+                        )
+                        topic_id = topic.message_thread_id
+                        
+                        # Сохраняем topic_id в тикет
+                        await service.set_topic_id(ticket, topic_id)
+                        logger.info(f"Created topic {topic_id} for ticket {ticket.ticket_id}")
+                        
+                        # Отправляем информацию о профиле пользователя и закрепляем
+                        profile_info = await send_user_profile_info(bot, ticket, topic_id)
+                        
+                        if profile_info:
+                            try:
+                                await bot.pin_chat_message(
+                                    chat_id=int(ADMIN_GROUP_ID),
+                                    message_id=profile_info.message_id,
+                                    message_thread_id=topic_id
+                                )
+                                logger.info(f"Pinned profile info message in topic {topic_id}")
+                            except Exception as e:
+                                logger.error(f"Failed to pin message: {e}")
+                        
+                        # Отправляем первое сообщение в топик
+                        await send_message_to_topic_safe(bot, message, topic_id)
+                        
+                        await message.answer("✅ Ваше обращение создано. Администратор скоро ответит.")
+                        
+                    except Exception as e:
+                        logger.error(f"Failed to create forum topic: {e}", exc_info=True)
+                        await message.answer("❌ Не удалось создать обращение. Попробуйте позже.")
                     
     except Exception as e:
         logger.error(f"Error in handle_user_message: {e}", exc_info=True)
         await message.answer("❌ Произошла ошибка. Попробуйте позже.")
+
+
+async def send_user_profile_info(bot: Bot, ticket: Ticket, topic_id: int) -> Message | None:
+    """Отправляет информацию о профиле пользователя в топик"""
+    try:
+        from config import ADMIN_GROUP_ID
+        
+        username_part = f"@{ticket.username}" if ticket.username else ticket.full_name
+        user_link = f"tg://user?id={ticket.user_id}"
+        
+        profile_text = (
+            f"👤 <b>Информация о пользователе</b>\n\n"
+            f"🆔 <b>User ID:</b> <code>{ticket.user_id}</code>\n"
+            f"👤 <b>Имя:</b> <a href=\"{user_link}\">{username_part}</a>\n"
+            f"🎫 <b>Тикет:</b> <code>{ticket.ticket_id}</code>\n"
+            f"📅 <b>Создан:</b> {ticket.created_at.strftime('%d.%m.%Y %H:%M')}"
+        )
+        
+        msg = await bot.send_message(
+            ADMIN_GROUP_ID,
+            profile_text,
+            parse_mode="HTML",
+            message_thread_id=topic_id,
+            disable_web_page_preview=True
+        )
+        
+        return msg
+        
+    except Exception as e:
+        logger.error(f"Failed to send user profile info: {e}", exc_info=True)
+        return None
+
+
+async def send_message_to_topic_safe(bot: Bot, message: Message, topic_id: int):
+    """
+    Отправляет сообщение в топик с обработкой flood control и задержками
+    """
+    max_retries = 3
+    retry_delay = 1.0
+    
+    for attempt in range(max_retries):
+        try:
+            await send_message_to_topic(bot, message, topic_id)
+            return
+        except TelegramRetryAfter as e:
+            wait_time = e.retry_after
+            logger.warning(f"Flood control: waiting {wait_time} seconds (attempt {attempt + 1}/{max_retries})")
+            await asyncio.sleep(wait_time)
+        except Exception as e:
+            logger.error(f"Failed to send message to topic {topic_id}: {e}", exc_info=True)
+            if attempt < max_retries - 1:
+                await asyncio.sleep(retry_delay)
+            else:
+                raise
 
 
 async def send_message_to_topic(bot: Bot, message: Message, topic_id: int):
@@ -115,6 +222,9 @@ async def send_message_to_topic(bot: Bot, message: Message, topic_id: int):
     try:
         from config import ADMIN_GROUP_ID
         from aiogram.enums import ContentType
+        
+        # Небольшая задержка между сообщениями для защиты от flood
+        await asyncio.sleep(0.1)
         
         if message.content_type == ContentType.TEXT:
             await bot.send_message(
@@ -191,4 +301,5 @@ async def send_message_to_topic(bot: Bot, message: Message, topic_id: int):
 def format_topic_name(ticket: Ticket) -> str:
     """Форматирует название топика"""
     username_part = f"@{ticket.username}" if ticket.username else ticket.full_name
-    return f"{ticket.ticket_id} | {ticket.user_id} | {username_part}"
+    status_emoji = "🟢" if ticket.status == TicketStatus.OPEN else "🔴"
+    return f"{status_emoji} {ticket.ticket_id} | {ticket.user_id} | {username_part}"

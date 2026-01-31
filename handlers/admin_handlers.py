@@ -190,6 +190,8 @@ async def forward_to_user(bot: Bot, message: Message, user_chat_id: int):
 
 def format_topic_name_closed(ticket: Ticket) -> str:
     """Форматирует название топика для закрытого тикета"""
+    from database.models import TicketStatus
     username_part = f"@{ticket.username}" if ticket.username else ticket.full_name
-    return f"🔴 {ticket.ticket_id} | {ticket.user_id} | {username_part}"
+    status_emoji = "🟢" if ticket.status == TicketStatus.OPEN else "🔴"
+    return f"{status_emoji} {ticket.ticket_id} | {ticket.user_id} | {username_part}"
 
