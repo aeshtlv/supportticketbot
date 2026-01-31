@@ -24,7 +24,8 @@ class TicketService:
                 Ticket.user_id == user_id,
                 Ticket.status == TicketStatus.OPEN
             )
-            .order_by(Ticket.created_at.desc())
+            .order_by(Ticket.created_at.desc(), Ticket.id.desc())
+            .limit(1)
         )
         return result.scalar_one_or_none()
     
@@ -33,7 +34,8 @@ class TicketService:
         result = await self.session.execute(
             select(Ticket)
             .where(Ticket.user_id == user_id)
-            .order_by(Ticket.created_at.desc())
+            .order_by(Ticket.created_at.desc(), Ticket.id.desc())
+            .limit(1)
         )
         return result.scalar_one_or_none()
     
