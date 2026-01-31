@@ -67,6 +67,11 @@ async def handle_support_reply(message: Message, bot: Bot):
     if not message.reply_to_message:
         return
     
+    logger.info(
+        f"Reply in support chat: reply_to_msg_id={message.reply_to_message.message_id}, "
+        f"thread_id={message.message_thread_id}, content_type={message.content_type}"
+    )
+    
     try:
         async with get_db().session_factory() as session:
             service = TicketService(session)
@@ -76,22 +81,48 @@ async def handle_support_reply(message: Message, bot: Bot):
             
             if link:
                 # Нашли связь - отправляем пользователю
+                logger.info(f"Found message link: user_id={link.user.telegram_id}, ticket_id={link.ticket.ticket_id}")
                 await forward_to_user(bot, message, link.user.telegram_id)
-                logger.info(f"Forwarded reply from support to user {link.user.telegram_id}")
+                logger.info(f"✅ Forwarded reply from support to user {link.user.telegram_id}")
             else:
-                # Может быть ответ на заголовок (для video_note, sticker) - ищем по топику
-                if message.message_thread_id:
+                # Если связь не найдена, ищем по топику
+                logger.warning(f"Message link not found for message_id={message.reply_to_message.message_id}, trying by topic")
+                
+                # Сначала пробуем найти по топику из самого сообщения
+                topic_id = message.message_thread_id
+                
+                # Если топика нет в сообщении, но есть в reply_to_message
+                if not topic_id and message.reply_to_message.message_thread_id:
+                    topic_id = message.reply_to_message.message_thread_id
+                
+                if topic_id:
+                    # Ищем тикет по topic_id
                     from sqlalchemy import select
                     from database.models import Ticket
                     
                     result = await session.execute(
-                        select(Ticket).where(Ticket.topic_id == message.message_thread_id)
+                        select(Ticket).where(Ticket.topic_id == topic_id)
                     )
                     ticket = result.scalar_one_or_none()
                     
                     if ticket:
+                        logger.info(f"Found ticket by topic_id={topic_id}: ticket_id={ticket.ticket_id}, user_id={ticket.user.telegram_id}")
                         await forward_to_user(bot, message, ticket.user.telegram_id)
-                        logger.info(f"Forwarded reply from support to user {ticket.user.telegram_id} (by topic)")
+                        logger.info(f"✅ Forwarded reply from support to user {ticket.user.telegram_id} (by topic)")
+                    else:
+                        # Пробуем найти по последним сообщениям в топике
+                        logger.warning(f"Ticket not found for topic_id={topic_id}, trying to find by recent messages")
+                        links = await service.get_message_links_by_topic(topic_id, limit=5)
+                        if links:
+                            # Берём последнюю связь из топика
+                            link = links[0]
+                            logger.info(f"Found message link by topic: user_id={link.user.telegram_id}, ticket_id={link.ticket.ticket_id}")
+                            await forward_to_user(bot, message, link.user.telegram_id)
+                            logger.info(f"✅ Forwarded reply from support to user {link.user.telegram_id} (by topic messages)")
+                        else:
+                            logger.error(f"Neither ticket nor message links found for topic_id={topic_id}")
+                else:
+                    logger.error(f"Topic ID not found in message or reply_to_message")
                         
     except Exception as e:
         logger.error(f"Error in handle_support_reply: {e}", exc_info=True)

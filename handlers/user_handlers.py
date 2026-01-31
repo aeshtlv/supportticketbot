@@ -93,11 +93,13 @@ async def forward_to_support(bot: Bot, message: Message, ticket, topic_id: int =
         elif message.content_type == ContentType.VIDEO_NOTE:
             sent = await bot.send_video_note(SUPPORT_CHAT_ID, message.video_note.file_id, message_thread_id=topic_id)
             header_msg = await bot.send_message(SUPPORT_CHAT_ID, header, reply_markup=keyboard, parse_mode="HTML", message_thread_id=topic_id)
-            return header_msg  # Возвращаем заголовок для связи
+            # Сохраняем связь для обоих сообщений
+            return (sent, header_msg)  # Возвращаем оба для сохранения связей
         elif message.content_type == ContentType.STICKER:
             sent = await bot.send_sticker(SUPPORT_CHAT_ID, message.sticker.file_id, message_thread_id=topic_id)
             header_msg = await bot.send_message(SUPPORT_CHAT_ID, header, reply_markup=keyboard, parse_mode="HTML", message_thread_id=topic_id)
-            return header_msg
+            # Сохраняем связь для обоих сообщений
+            return (sent, header_msg)  # Возвращаем оба для сохранения связей
         elif message.content_type == ContentType.ANIMATION:
             sent = await bot.send_animation(
                 SUPPORT_CHAT_ID,
@@ -270,18 +272,45 @@ async def handle_user_message(message: Message, bot: Bot):
                 topic_id = None
             
             # Пересылаем в чат поддержки
-            sent_message = await forward_to_support(bot, message, ticket, topic_id)
+            sent_result = await forward_to_support(bot, message, ticket, topic_id)
             
-            if sent_message:
-                # Сохраняем связь между сообщениями
-                await service.create_message_link(
-                    ticket=ticket,
-                    user=user,
-                    user_message_id=message.message_id,
-                    support_message_id=sent_message.message_id,
-                    topic_id=topic_id
-                )
-                logger.info(f"Forwarded message from user {user.telegram_id} to support chat")
+            if sent_result:
+                # Для video_note и sticker возвращается кортеж (медиа, заголовок)
+                if isinstance(sent_result, tuple):
+                    media_msg, header_msg = sent_result
+                    # Сохраняем связь для обоих сообщений
+                    await service.create_message_link(
+                        ticket=ticket,
+                        user=user,
+                        user_message_id=message.message_id,
+                        support_message_id=media_msg.message_id,
+                        topic_id=topic_id
+                    )
+                    await service.create_message_link(
+                        ticket=ticket,
+                        user=user,
+                        user_message_id=message.message_id,
+                        support_message_id=header_msg.message_id,
+                        topic_id=topic_id
+                    )
+                    logger.info(
+                        f"Forwarded message from user {user.telegram_id} to support chat: "
+                        f"user_msg_id={message.message_id}, media_msg_id={media_msg.message_id}, "
+                        f"header_msg_id={header_msg.message_id}, topic_id={topic_id}"
+                    )
+                else:
+                    # Обычное сообщение
+                    await service.create_message_link(
+                        ticket=ticket,
+                        user=user,
+                        user_message_id=message.message_id,
+                        support_message_id=sent_result.message_id,
+                        topic_id=topic_id
+                    )
+                    logger.info(
+                        f"Forwarded message from user {user.telegram_id} to support chat: "
+                        f"user_msg_id={message.message_id}, support_msg_id={sent_result.message_id}, topic_id={topic_id}"
+                    )
             else:
                 await message.answer("❌ Не удалось отправить сообщение в поддержку. Попробуйте позже.")
                 

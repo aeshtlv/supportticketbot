@@ -133,6 +133,17 @@ class TicketService:
         )
         return result.scalar_one_or_none()
     
+    async def get_message_links_by_topic(self, topic_id: int, limit: int = 10) -> list[MessageLink]:
+        """Получить последние связи по topic_id"""
+        result = await self.session.execute(
+            select(MessageLink)
+            .options(selectinload(MessageLink.user), selectinload(MessageLink.ticket))
+            .where(MessageLink.topic_id == topic_id)
+            .order_by(MessageLink.created_at.desc())
+            .limit(limit)
+        )
+        return list(result.scalars().all())
+    
     async def get_setting(self, key: str, default: str = "") -> str:
         """Получить настройку"""
         result = await self.session.execute(select(BotSettings).where(BotSettings.key == key))
