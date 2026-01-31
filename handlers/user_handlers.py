@@ -198,6 +198,10 @@ async def cmd_reopen(message: Message):
 @router.message()
 async def handle_user_message(message: Message, bot: Bot):
     """Обработка всех сообщений от пользователей"""
+    # ВАЖНО: Игнорируем сообщения из чата поддержки (они обрабатываются support_handlers)
+    if SUPPORT_CHAT_ID and str(message.chat.id) == str(SUPPORT_CHAT_ID):
+        return
+    
     # Игнорируем служебные события форума
     forum_events = [
         ContentType.FORUM_TOPIC_CREATED,

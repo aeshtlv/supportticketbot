@@ -25,6 +25,8 @@ def is_support_chat(message: Message) -> bool:
 async def forward_to_user(bot: Bot, message: Message, user_telegram_id: int):
     """Пересылает ответ пользователю"""
     try:
+        logger.info(f"Forwarding message to user {user_telegram_id}, content_type={message.content_type}")
+        
         if message.content_type == ContentType.TEXT:
             await bot.send_message(user_telegram_id, message.text)
         elif message.content_type == ContentType.PHOTO:
@@ -45,6 +47,8 @@ async def forward_to_user(bot: Bot, message: Message, user_telegram_id: int):
             await bot.send_animation(user_telegram_id, message.animation.file_id, caption=message.caption)
         else:
             await bot.send_message(user_telegram_id, f"[Неподдерживаемый тип: {message.content_type}]")
+        
+        logger.info(f"✅ Successfully forwarded message to user {user_telegram_id}")
     except Exception as e:
         logger.error(f"Failed to forward to user {user_telegram_id}: {e}", exc_info=True)
 
@@ -65,11 +69,17 @@ async def handle_support_reply(message: Message, bot: Bot):
     
     # Проверяем, что это ответ на сообщение
     if not message.reply_to_message:
+        logger.debug(f"Message in support chat is not a reply, ignoring")
+        return
+    
+    # ВАЖНО: Проверяем, что это не сообщение от бота (чтобы избежать циклов)
+    if message.from_user and message.from_user.is_bot:
+        logger.debug(f"Message from bot, ignoring")
         return
     
     logger.info(
-        f"Reply in support chat: reply_to_msg_id={message.reply_to_message.message_id}, "
-        f"thread_id={message.message_thread_id}, content_type={message.content_type}"
+        f"Reply in support chat from user {message.from_user.id}: reply_to_msg_id={message.reply_to_message.message_id}, "
+        f"thread_id={message.message_thread_id}, content_type={message.content_type}, text={message.text[:50] if message.text else None}"
     )
     
     try:
