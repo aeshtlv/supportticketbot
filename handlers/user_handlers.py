@@ -9,6 +9,7 @@ from aiogram.filters import Command
 
 from config import ADMIN_GROUP_ID
 from database import get_db
+from database.models import Ticket
 from services import TicketService
 
 router = Router()
