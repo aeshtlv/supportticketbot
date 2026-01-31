@@ -17,10 +17,12 @@ logger = logging.getLogger(__name__)
 
 
 def is_admin(user_id: int) -> bool:
+    """Проверка, является ли пользователь администратором"""
     return user_id in ADMIN_IDS
 
 
 class AdminStates(StatesGroup):
+    """Состояния для админ-панели"""
     EDIT_WELCOME = State()
     EDIT_HELP = State()
 
@@ -96,12 +98,18 @@ async def handle_admin_callback(callback: CallbackQuery, state: FSMContext):
     try:
         if callback.data == "admin:edit_welcome":
             await state.set_state(AdminStates.EDIT_WELCOME)
-            await callback.message.edit_text("✏️ <b>Редактирование приветствия</b>\n\nОтправьте новый текст для команды /start:", parse_mode="HTML")
+            await callback.message.edit_text(
+                "✏️ <b>Редактирование приветствия</b>\n\nОтправьте новый текст для команды /start:",
+                parse_mode="HTML"
+            )
             await callback.answer()
         
         elif callback.data == "admin:edit_help":
             await state.set_state(AdminStates.EDIT_HELP)
-            await callback.message.edit_text("✏️ <b>Редактирование справки</b>\n\nОтправьте новый текст для команды /help:", parse_mode="HTML")
+            await callback.message.edit_text(
+                "✏️ <b>Редактирование справки</b>\n\nОтправьте новый текст для команды /help:",
+                parse_mode="HTML"
+            )
             await callback.answer()
         
         elif callback.data == "admin:topic_mode":
@@ -111,7 +119,10 @@ async def handle_admin_callback(callback: CallbackQuery, state: FSMContext):
                 new_mode = "common" if current_mode == "separate" else "separate"
                 await service.set_setting("topic_mode", new_mode)
                 mode_text = "Отдельный топик для каждого" if new_mode == "separate" else "Общий топик"
-                await callback.message.edit_text(f"✅ <b>Режим топиков изменён</b>\n\n📁 Текущий режим: {mode_text}", parse_mode="HTML")
+                await callback.message.edit_text(
+                    f"✅ <b>Режим топиков изменён</b>\n\n📁 Текущий режим: {mode_text}",
+                    parse_mode="HTML"
+                )
             await callback.answer("✅ Режим изменён")
         
         elif callback.data == "admin:open_tickets":

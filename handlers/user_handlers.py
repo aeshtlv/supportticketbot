@@ -92,10 +92,12 @@ async def forward_to_support(bot: Bot, message: Message, ticket, topic_id: int =
             )
         elif message.content_type == ContentType.VIDEO_NOTE:
             sent = await bot.send_video_note(SUPPORT_CHAT_ID, message.video_note.file_id, message_thread_id=topic_id)
-            await bot.send_message(SUPPORT_CHAT_ID, header, reply_markup=keyboard, parse_mode="HTML", message_thread_id=topic_id)
+            header_msg = await bot.send_message(SUPPORT_CHAT_ID, header, reply_markup=keyboard, parse_mode="HTML", message_thread_id=topic_id)
+            return header_msg  # Возвращаем заголовок для связи
         elif message.content_type == ContentType.STICKER:
             sent = await bot.send_sticker(SUPPORT_CHAT_ID, message.sticker.file_id, message_thread_id=topic_id)
-            await bot.send_message(SUPPORT_CHAT_ID, header, reply_markup=keyboard, parse_mode="HTML", message_thread_id=topic_id)
+            header_msg = await bot.send_message(SUPPORT_CHAT_ID, header, reply_markup=keyboard, parse_mode="HTML", message_thread_id=topic_id)
+            return header_msg
         elif message.content_type == ContentType.ANIMATION:
             sent = await bot.send_animation(
                 SUPPORT_CHAT_ID,
@@ -194,7 +196,7 @@ async def cmd_reopen(message: Message):
 @router.message()
 async def handle_user_message(message: Message, bot: Bot):
     """Обработка всех сообщений от пользователей"""
-    # Игнорируем служебные события
+    # Игнорируем служебные события форума
     forum_events = [
         ContentType.FORUM_TOPIC_CREATED,
         ContentType.FORUM_TOPIC_CLOSED,
@@ -239,24 +241,39 @@ async def handle_user_message(message: Message, bot: Bot):
             topic_id = None
             
             if topic_mode == "separate":
+                # Режим отдельного топика для каждого пользователя
                 if not ticket.topic_id:
                     try:
                         user_info = f"@{user.username}" if user.username else user.full_name
-                        topic_name = f"🎫 {ticket.ticket_id} | {user_info}"
-                        topic = await bot.create_forum_topic(chat_id=int(SUPPORT_CHAT_ID), name=topic_name)
+                        topic_name = f"🟢 {ticket.ticket_id} | {user_info}"
+                        
+                        # Создаём топик в форуме
+                        topic = await bot.create_forum_topic(
+                            chat_id=int(SUPPORT_CHAT_ID),
+                            name=topic_name
+                        )
                         topic_id = topic.message_thread_id
+                        
+                        # Сохраняем topic_id в тикет
                         ticket.topic_id = topic_id
                         await session.commit()
+                        logger.info(f"Created forum topic {topic_id} for ticket {ticket.ticket_id}")
                     except Exception as e:
-                        logger.error(f"Failed to create forum topic: {e}")
+                        logger.error(f"Failed to create forum topic: {e}", exc_info=True)
+                        # Fallback: используем общий режим
                         topic_id = None
                 else:
                     topic_id = ticket.topic_id
+                    logger.debug(f"Using existing topic {topic_id} for ticket {ticket.ticket_id}")
+            else:
+                # Общий топик - topic_id = None
+                topic_id = None
             
             # Пересылаем в чат поддержки
             sent_message = await forward_to_support(bot, message, ticket, topic_id)
             
             if sent_message:
+                # Сохраняем связь между сообщениями
                 await service.create_message_link(
                     ticket=ticket,
                     user=user,
@@ -264,6 +281,7 @@ async def handle_user_message(message: Message, bot: Bot):
                     support_message_id=sent_message.message_id,
                     topic_id=topic_id
                 )
+                logger.info(f"Forwarded message from user {user.telegram_id} to support chat")
             else:
                 await message.answer("❌ Не удалось отправить сообщение в поддержку. Попробуйте позже.")
                 

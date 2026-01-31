@@ -1,9 +1,9 @@
 """
-Обработчики для чата поддержки
+Обработчики для чата поддержки (Reply на сообщения)
 """
 import logging
 from aiogram import Router, Bot, F
-from aiogram.types import Message, CallbackQuery
+from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.enums import ContentType
 
 from config import SUPPORT_CHAT_ID
@@ -43,25 +43,27 @@ async def forward_to_user(bot: Bot, message: Message, user_telegram_id: int):
             await bot.send_sticker(user_telegram_id, message.sticker.file_id)
         elif message.content_type == ContentType.ANIMATION:
             await bot.send_animation(user_telegram_id, message.animation.file_id, caption=message.caption)
+        else:
+            await bot.send_message(user_telegram_id, f"[Неподдерживаемый тип: {message.content_type}]")
     except Exception as e:
-        logger.error(f"Failed to forward to user {user_telegram_id}: {e}")
+        logger.error(f"Failed to forward to user {user_telegram_id}: {e}", exc_info=True)
 
 
-@router.message()
+@router.message(F.func(is_support_chat))
 async def handle_support_reply(message: Message, bot: Bot):
     """Обработка Reply в чате поддержки"""
-    if not is_support_chat(message):
-        return
-    
-    # Игнорируем служебные события
+    # Игнорируем служебные события форума
     if message.content_type in [
         ContentType.FORUM_TOPIC_CREATED,
         ContentType.FORUM_TOPIC_CLOSED,
         ContentType.FORUM_TOPIC_REOPENED,
         ContentType.FORUM_TOPIC_EDITED,
+        ContentType.GENERAL_FORUM_TOPIC_HIDDEN,
+        ContentType.GENERAL_FORUM_TOPIC_UNHIDDEN,
     ]:
         return
     
+    # Проверяем, что это ответ на сообщение
     if not message.reply_to_message:
         return
     
@@ -69,11 +71,15 @@ async def handle_support_reply(message: Message, bot: Bot):
         async with get_db().session_factory() as session:
             service = TicketService(session)
             
-            # Ищем связь по ID сообщения
+            # Ищем связь по ID сообщения, на которое ответили
             link = await service.get_message_link_by_support_id(message.reply_to_message.message_id)
             
-            if not link:
-                # Может быть ответ на заголовок - ищем по топику
+            if link:
+                # Нашли связь - отправляем пользователю
+                await forward_to_user(bot, message, link.user.telegram_id)
+                logger.info(f"Forwarded reply from support to user {link.user.telegram_id}")
+            else:
+                # Может быть ответ на заголовок (для video_note, sticker) - ищем по топику
                 if message.message_thread_id:
                     from sqlalchemy import select
                     from database.models import Ticket
@@ -85,11 +91,8 @@ async def handle_support_reply(message: Message, bot: Bot):
                     
                     if ticket:
                         await forward_to_user(bot, message, ticket.user.telegram_id)
-                return
-            
-            # Отправляем ответ пользователю
-            await forward_to_user(bot, message, link.user.telegram_id)
-            
+                        logger.info(f"Forwarded reply from support to user {ticket.user.telegram_id} (by topic)")
+                        
     except Exception as e:
         logger.error(f"Error in handle_support_reply: {e}", exc_info=True)
 
@@ -97,9 +100,6 @@ async def handle_support_reply(message: Message, bot: Bot):
 @router.callback_query(F.data.startswith("toggle_ticket:") | F.data.startswith("toggle_ban:"))
 async def handle_callback(callback: CallbackQuery, bot: Bot):
     """Обработка callback кнопок"""
-    if not callback.data:
-        return
-    
     try:
         if callback.data.startswith("toggle_ticket:"):
             ticket_id = callback.data.split(":")[1]
@@ -112,6 +112,7 @@ async def handle_callback(callback: CallbackQuery, bot: Bot):
                     await callback.answer("Тикет не найден", show_alert=True)
                     return
                 
+                # Переключаем статус
                 if ticket.status == TicketStatus.OPEN:
                     await service.close_ticket(ticket)
                     status_emoji = "🔴"
@@ -121,7 +122,7 @@ async def handle_callback(callback: CallbackQuery, bot: Bot):
                     status_emoji = "🟢"
                     status_text = "открыт"
                 
-                # Обновляем название топика
+                # Обновляем название топика, если используется отдельный топик
                 if ticket.topic_id:
                     try:
                         user_info = f"@{ticket.user.username}" if ticket.user.username else ticket.user.full_name
@@ -131,12 +132,11 @@ async def handle_callback(callback: CallbackQuery, bot: Bot):
                             message_thread_id=ticket.topic_id,
                             name=topic_name
                         )
+                        logger.info(f"Updated topic {ticket.topic_id} name to {topic_name}")
                     except Exception as e:
-                        logger.error(f"Failed to update topic name: {e}")
+                        logger.error(f"Failed to update topic name: {e}", exc_info=True)
                 
                 # Обновляем кнопку
-                from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
-                
                 keyboard = InlineKeyboardMarkup(inline_keyboard=[
                     [
                         InlineKeyboardButton(
@@ -152,8 +152,8 @@ async def handle_callback(callback: CallbackQuery, bot: Bot):
                 
                 try:
                     await callback.message.edit_reply_markup(reply_markup=keyboard)
-                except:
-                    pass
+                except Exception as e:
+                    logger.error(f"Failed to edit reply markup: {e}")
                 
                 await callback.answer(f"✅ Тикет {status_text}")
         
@@ -168,6 +168,7 @@ async def handle_callback(callback: CallbackQuery, bot: Bot):
                     await callback.answer("Пользователь не найден", show_alert=True)
                     return
                 
+                # Переключаем бан
                 if user.is_banned:
                     await service.unban_user(user)
                     action = "разбанен"
@@ -176,9 +177,8 @@ async def handle_callback(callback: CallbackQuery, bot: Bot):
                     action = "забанен"
                 
                 # Обновляем кнопку
-                from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
-                from database.models import Ticket
                 from sqlalchemy import select
+                from database.models import Ticket
                 
                 result = await session.execute(
                     select(Ticket).where(Ticket.user_id == user.id).order_by(Ticket.created_at.desc())
@@ -201,8 +201,8 @@ async def handle_callback(callback: CallbackQuery, bot: Bot):
                     
                     try:
                         await callback.message.edit_reply_markup(reply_markup=keyboard)
-                    except:
-                        pass
+                    except Exception as e:
+                        logger.error(f"Failed to edit reply markup: {e}")
                 
                 await callback.answer(f"✅ Пользователь {action}")
                 
